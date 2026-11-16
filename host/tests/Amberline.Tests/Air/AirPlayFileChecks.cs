@@ -46,6 +46,9 @@ public static class AirPlayFileChecks
                 "player-file.ps1 must render Play.cmd exactly as PlatformBootstrap.RenderLauncher renders a launcher");
             TestAssert.True(play.Contains("--install --connection $connection --server-name $Name", StringComparison.Ordinal),
                 "Play.cmd must start the companion's installer for its server");
+            // Batch 829: it downloads into the line's own player folder, the one the companion keeps its record in (FolderMove.PlayerFolder).
+            TestAssert.True(play.Contains($"$root = Join-Path $local '{Path.GetFileName(Amberline.AirCompanion.FolderMove.PlayerFolder("local"))}'", StringComparison.Ordinal),
+                "Play.cmd must download into the companion's own per-user folder");
 
             // Play.cmd's own decoder (Windows PowerShell 5.1) gives back the host, the port and the pin.
             var declarations = Path.Combine(root, "declarations.ps1");
@@ -263,8 +266,9 @@ public static class AirPlayFileChecks
 
     private static (int ExitCode, string Output) RunPlayerFile(string root, string host, int port, string? certificate)
     {
+        // Batch 829: the line's player folder, as build-server.ps1 passes it (the script's own default is the 1.0.0.126 line's).
         string[] arguments = ["-File", AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "player-file.ps1")), "-Root", root,
-            "-PublicHost", host, "-Port", port.ToString(System.Globalization.CultureInfo.InvariantCulture)];
+            "-PublicHost", host, "-Port", port.ToString(System.Globalization.CultureInfo.InvariantCulture), "-PlayerFolder", PlatformBootstrap.PlayerFolderName];
         return AirBootstrapChecks.RunPowerShell("pwsh", certificate is null ? arguments : [.. arguments, "-Certificate", certificate]);
     }
 

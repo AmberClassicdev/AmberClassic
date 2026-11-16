@@ -57,6 +57,26 @@ public static class HomeReleaseLineChecks
         Expect(own.Chat, CompanionLine.ChatPort, "CompanionLine.ChatPort");
         Expect("http://127.0.0.1:" + own.Web, CompanionLine.LocalPlatform, "CompanionLine.LocalPlatform");
 
+        // Batch 828: the line's home install (patch.json "home", which tools/guide.ps1 reads): its name and marker, and what the code derives from them.
+        Expect(own.HomeName, FolderMove.HostName, "FolderMove.HostName");
+        Expect(own.Marker, FolderMove.InstallMarker, "FolderMove.InstallMarker");
+        Expect(@"C:\" + own.HomeName, HostInstall.DefaultFolder, "HostInstall.DefaultFolder");
+        Expect(own.HomeName + ".lnk", HostInstall.ShortcutName, "HostInstall.ShortcutName");
+        Expect(own.HomeName + " sign-in", HostFirewall.SignInRule, "HostFirewall.SignInRule");
+        Expect(own.HomeName + " games", HostFirewall.GamesRule, "HostFirewall.GamesRule");
+        Expect(Path.Combine("local", own.HomeName, "install.json"), FolderMove.PointerPath("local"), "FolderMove.PointerPath");
+        if (own.HomeName == sibling.HomeName) problems.Add($"the {patch} home install name {own.HomeName} is the other line's");
+        if (own.Marker == sibling.Marker) problems.Add($"the {patch} install marker {own.Marker} is the other line's");
+        // Batch 829: the friend's player install and the release take the same name (build-server.ps1 passes "<home> Player" to
+        // player-file.ps1 and names the zip "<home with hyphens>-<v>-win-x64.zip").
+        Expect(Path.Combine("local", own.HomeName + " Player"), FolderMove.PlayerFolder("local"), "FolderMove.PlayerFolder");
+        Expect(own.HomeName + " Player", PlatformBootstrap.PlayerFolderName, "PlatformBootstrap.PlayerFolderName (the Play file's folder)");
+        Expect(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + own.HomeName, PlayerUninstall.AppsKey, "PlayerUninstall.AppsKey");
+        Expect(own.HomeName.Replace(' ', '-') + "-1.2.3-win-x64.zip", HostUpdates.ZipName(new(1, 2, 3)), "HostUpdates.ZipName");
+        // The player folder from before batch 647 (Amberline\player) is the 1.0.0.126 line's alone; 132's lies inside its own player folder.
+        if (patch != "126" && !FolderMove.Inside(FolderMove.OldPlayerFolder("local"), FolderMove.PlayerFolder("local")))
+            problems.Add($"the {patch} player folder from before batch 647 ({FolderMove.OldPlayerFolder("local")}) is outside its own player folder");
+
         // The platform.json a new home host writes: the --init record (Platform Program.cs), with the ports it stores explicitly.
         using (var written = JsonDocument.Parse(JsonSerializer.Serialize(new PlatformSettings("data", "server"), HostFiles.Json)))
         {
@@ -82,8 +102,8 @@ public static class HomeReleaseLineChecks
     private static object? Default(System.Reflection.MethodBase method, string parameter) =>
         method.GetParameters().Single(candidate => candidate.Name == parameter).DefaultValue;
 
-    /// <summary>The ports and patch facts of one line's patch.json.</summary>
-    private sealed record Facts(string Label, string ClientZip, int Web, int Remote, int Rtmp, int Chat, int GameFirst)
+    /// <summary>The ports, patch facts and home install (batch 828) of one line's patch.json.</summary>
+    private sealed record Facts(string Label, string ClientZip, int Web, int Remote, int Rtmp, int Chat, int GameFirst, string HomeName, string Marker)
     {
         public static Facts Read(string path)
         {
@@ -92,7 +112,8 @@ public static class HomeReleaseLineChecks
             var ports = root.GetProperty("ports");
             return new Facts(root.GetProperty("label").GetString()!, root.GetProperty("clientZip").GetString()!,
                 ports.GetProperty("web").GetInt32(), ports.GetProperty("remote").GetInt32(), ports.GetProperty("rtmp").GetInt32(),
-                ports.GetProperty("chat").GetInt32(), ports.GetProperty("gameFirst").GetInt32());
+                ports.GetProperty("chat").GetInt32(), ports.GetProperty("gameFirst").GetInt32(),
+                root.GetProperty("home").GetProperty("name").GetString()!, root.GetProperty("home").GetProperty("marker").GetString()!);
         }
     }
 }

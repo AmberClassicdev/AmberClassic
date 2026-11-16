@@ -54,7 +54,7 @@ internal sealed record PlayerProfile(string LocalAppData, string Desktop, bool W
     public string OldStage => Path.Combine(PlayerFolder, "stage", "stage.json");
 
     /// <summary>The settings of an Amberline server on this PC (its home-mode data folder), when it has one.</summary>
-    public string HostSettings => Path.Combine(LocalAppData, "Amberline", "data", "platform.json");
+    public string HostSettings => Path.Combine(LocalAppData, FolderMove.HostName, "data", "platform.json");
 }
 
 /// <summary>

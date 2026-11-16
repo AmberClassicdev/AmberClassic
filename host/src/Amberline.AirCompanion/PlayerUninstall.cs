@@ -16,8 +16,12 @@ namespace Amberline.AirCompanion;
 /// </summary>
 internal static class PlayerUninstall
 {
-    /// <summary>The per-user entry in Windows' "Apps" list (HKCU, so no administrator is needed).</summary>
-    internal const string AppsKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Amberline";
+    /// <summary>
+    /// The per-user entry in Windows' "Apps" list (HKCU, so no administrator is needed). Batch 829: named after the line's home install
+    /// (<see cref="FolderMove.HostName"/>: <c>Uninstall\Amberline</c> on 1.0.0.126, <c>Uninstall\Amberline 132</c> on 1.0.0.132), so each line's
+    /// player install has its own entry.
+    /// </summary>
+    internal const string AppsKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + FolderMove.HostName;
 
     internal sealed record Server(string Id, string Name, string Folder, string? Shortcut, string? FolderShortcut);
 
@@ -234,10 +238,13 @@ internal static class PlayerUninstall
         return Process.Start(start) ?? throw new IOException("Windows PowerShell did not start.");
     }
 
-    /// <summary>The values of the "Apps" entry: the windowless tool's removal window, the game's icon, and no Modify or Repair.</summary>
+    /// <summary>
+    /// The values of the "Apps" entry: the windowless tool's removal window, the game's icon, and no Modify or Repair. Its name is the line's
+    /// (batch 829: "Amberline 132" on 1.0.0.132), so the two lines' entries tell apart.
+    /// </summary>
     internal static IReadOnlyDictionary<string, object> AppsEntry(PlayerInstall.Record record) => new Dictionary<string, object>
     {
-        ["DisplayName"] = PlayerInstall.DefaultServerName,
+        ["DisplayName"] = FolderMove.HostName,
         ["Publisher"] = PlayerInstall.DefaultServerName,
         ["DisplayIcon"] = Path.Combine(record.Game, "League of Legends.exe") + ",0",
         ["InstallLocation"] = record.Install,

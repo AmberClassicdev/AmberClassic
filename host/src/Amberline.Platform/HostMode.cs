@@ -18,7 +18,7 @@ public sealed record HostPaths(string Data, string App)
 {
     public static HostPaths Resolve(string? platformHome, string localAppData, string appFolder) =>
         new(Path.GetFullPath(!string.IsNullOrWhiteSpace(platformHome) ? platformHome
-                : InstallFolder(appFolder) is { } install ? Path.Combine(install, "data") : Path.Combine(localAppData, "Amberline", "data")),
+                : InstallFolder(appFolder) is { } install ? Path.Combine(install, "data") : Path.Combine(localAppData, Folders.FolderMove.HostName, "data")),
             Path.GetFullPath(appFolder));
 
     /// <summary>The one-folder install a Platform folder (<c>app\platform</c>) belongs to, or null when it runs from anywhere else.</summary>

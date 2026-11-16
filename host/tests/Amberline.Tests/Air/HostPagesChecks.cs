@@ -242,7 +242,7 @@ public static class HostPagesChecks
                 ("choice", HostAddress.Typed), ("address", "not an address")), "Settings"), "address");
             Nav(await FolderPageAsync(browser, HostSettingsPage.FoldersPath, HostDashboard.Policy), "Settings");
             Nav(await PageAsync(browser, HttpMethod.Get, HostSettingsPage.UninstallPath, HttpStatusCode.OK, HostDashboard.Policy), "Settings");
-            File.WriteAllText(Path.Combine(home.Root, "amberline-install.json"), "{}");
+            File.WriteAllText(Path.Combine(home.Root, Amberline.AirCompanion.FolderMove.InstallMarker), "{}");
             Nav(await PageAsync(browser, HttpMethod.Get, HostSettingsPage.UninstallPath, HttpStatusCode.OK, HostDashboard.Policy), "Settings");
             Errors(Nav(await FormAsync(browser, HostSettingsPage.UninstallPath, HttpStatusCode.BadRequest, HostDashboard.Policy, ("confirm", "")), "Settings"), "confirm");
             await PageAsync(browser, HttpMethod.Get, HostSupport.PagePath, HttpStatusCode.OK, HostDashboard.Policy);

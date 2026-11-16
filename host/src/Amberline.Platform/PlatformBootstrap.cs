@@ -45,6 +45,12 @@ public static class PlatformBootstrap
     private static readonly JsonSerializerOptions ManifestJson = new(JsonSerializerDefaults.Web)
         { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
+    /// <summary>
+    /// Batch 829: the name of the player tool's per-user folder (<see cref="Folders.FolderMove.PlayerFolder"/>, "Amberline Player" on 1.0.0.126,
+    /// "Amberline 132 Player" on 1.0.0.132), which the Play file downloads into (<c>__PLAYER__</c>), so each line's Play file fills its own.
+    /// </summary>
+    public static readonly string PlayerFolderName = Path.GetFileName(Folders.FolderMove.PlayerFolder(""));
+
     /// <param name="serverName">The Play file's server name (<c>__NAME__</c>, <see cref="HostAddress.NameProblem"/>'s rule), put in
     /// last as <c>tools/player-file.ps1</c> does; null leaves the template's <c>__NAME__</c> as it is.</param>
     public static string RenderLauncher(string template, string host, int port, string certificateSha256, string? serverName = null)
@@ -57,7 +63,8 @@ public static class PlatformBootstrap
         var hostToken = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(host).Select(b => (byte)(b ^ 0x5A)).ToArray());
         var text = template.Replace("__HOST__", hostToken, StringComparison.Ordinal)
             .Replace("__PORT__", port.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
-            .Replace("__CERT__", certificateSha256, StringComparison.Ordinal);
+            .Replace("__CERT__", certificateSha256, StringComparison.Ordinal)
+            .Replace("__PLAYER__", PlayerFolderName, StringComparison.Ordinal);
         return serverName is null ? text : text.Replace("__NAME__", serverName, StringComparison.Ordinal);
     }
 

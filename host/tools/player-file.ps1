@@ -26,6 +26,10 @@ An existing host.pfx to keep (the one a running server has in platform-data/remo
 .PARAMETER ServerName
 The server's display name, the name of the players' desktop shortcut. Default Amberline.
 
+.PARAMETER PlayerFolder
+Batch 829: the name of the player tool's per-user folder that Play.cmd downloads into (FolderMove.PlayerFolder of the patch line):
+Amberline Player on 1.0.0.126 (the default), Amberline 132 Player on 1.0.0.132. tools/build-server.ps1 passes the line's own.
+
 .EXAMPLE
 pwsh -NoProfile -File ./tools/player-file.ps1 -Root <deployment folder> -PublicHost <your server's address> -Port 8391
 #>
@@ -35,7 +39,8 @@ param(
     [Parameter(Mandatory)][string]$PublicHost,
     [Parameter(Mandatory)][ValidateRange(1, 65535)][int]$Port,
     [string]$Certificate,
-    [string]$ServerName = 'Amberline'
+    [string]$ServerName = 'Amberline',
+    [ValidatePattern('^Amberline( [0-9]+)? Player\z')][string]$PlayerFolder = 'Amberline Player'
 )
 $ErrorActionPreference = 'Stop'
 # PlatformBootstrap.IsHost's rule: the Platform serves the player's download only for such a host.
@@ -91,6 +96,6 @@ $pin = Get-Pin $pfx
 # CRLF whatever the checkout's line endings: cmd.exe reads the file.
 $template = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'play-bootstrap.cmd')).Replace("`r`n", "`n").Replace("`n", "`r`n")
 $token = [Convert]::ToBase64String([byte[]]@([Text.Encoding]::ASCII.GetBytes($PublicHost) | ForEach-Object { $_ -bxor 0x5A }))
-$text = $template.Replace('__HOST__', $token).Replace('__PORT__', [string]$Port).Replace('__CERT__', $pin).Replace('__NAME__', $ServerName)
+$text = $template.Replace('__HOST__', $token).Replace('__PORT__', [string]$Port).Replace('__CERT__', $pin).Replace('__PLAYER__', $PlayerFolder).Replace('__NAME__', $ServerName)
 [IO.File]::WriteAllText((Join-Path $Root 'Play.cmd'), $text, [Text.Encoding]::ASCII)
 $pin

@@ -155,10 +155,12 @@ public static class HostFolderChecks
             foreach (var place in FolderSetup.ThisPc().Places)
                 TestAssert.True(place.Depth >= 8 && place.Folders > 0, $"{place.Depth} levels, {place.Folders} folders");
             // The one-folder install's pointer, then the player's record (batch 647: its own per-user folder), then the one in the folder from before.
+            // Batch 829: the player's folders are the line's own (Amberline Player and Amberline\player on 126, Amberline 132 Player on 132).
             var records = FolderSetup.ThisPc().Records;
-            TestAssert.True(records.Count == 3 && records[0].EndsWith(@"\Amberline\install.json", StringComparison.OrdinalIgnoreCase) &&
-                records[1].EndsWith(@"\Amberline Player\install.json", StringComparison.OrdinalIgnoreCase) &&
-                records[2].EndsWith(@"\Amberline\player\install.json", StringComparison.OrdinalIgnoreCase), string.Join(", ", records));
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            TestAssert.True(records.Count == 3 && records[0].EndsWith($@"\{Amberline.AirCompanion.FolderMove.HostName}\install.json", StringComparison.OrdinalIgnoreCase) &&
+                records[1].EndsWith($@"\{Amberline.AirCompanion.FolderMove.HostName} Player\install.json", StringComparison.OrdinalIgnoreCase) &&
+                records[2] == Path.Combine(Amberline.AirCompanion.FolderMove.OldPlayerFolder(local), "install.json"), string.Join(", ", records));
             TestAssert.Equal(0, new FolderSetup().Places.Count + new FolderSetup().Records.Count, "by default nothing is searched");
             TestAssert.Equal(null, new FolderSetup().Choose, "by default no folder window opens");
         }

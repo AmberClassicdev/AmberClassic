@@ -42,7 +42,7 @@ public static class HostOneFolderChecks
             // The layout: the program, its data, the game in the RADS-shaped path the server needs, the AIR client, the READ ME.
             TestAssert.Equal(Path.Combine(folder, "app"), install.App);
             // Batch 641: and its uninstaller.
-            TestAssert.Equal("READ ME.txt, Uninstall Amberline.cmd, air, amberline-install.json, app, data, game", Entries(folder), "the install folder holds only Amberline");
+            TestAssert.Equal($"READ ME.txt, Uninstall Amberline.cmd, air, {FolderMove.InstallMarker}, app, data, game", Entries(folder), "the install folder holds only Amberline");
             TestAssert.Equal(HostUninstall.Command, File.ReadAllText(Path.Combine(folder, HostUninstall.CommandName)), "the uninstaller starts the installed Platform");
             TestAssert.Equal(HostInstallChecks.Snapshot(release), HostInstallChecks.Snapshot(install.App), "app is the release's copy");
             var installedGame = Path.Combine(folder, @"game\projects\lol_game_client\releases\0.0.0.51");
@@ -58,13 +58,13 @@ public static class HostOneFolderChecks
                 TestAssert.True(Same(Path.Combine(folder, "air"), settings.RootElement.GetProperty("airRoot").GetString()), "platform.json names the AIR client inside");
             }
             var readMe = File.ReadAllText(Path.Combine(folder, HostInstall.ReadMeName));
-            var pointer = Path.Combine(Local(root), "Amberline", "install.json");
-            foreach (var phrase in new[] { "TO REMOVE AMBERLINE", $"Delete this folder: {folder}", $"Delete the small file {pointer}", "Amberline icon on your desktop", "Amberline sign-in" })
+            var pointer = Path.Combine(Local(root), FolderMove.HostName, "install.json");
+            foreach (var phrase in new[] { "TO REMOVE AMBERLINE", $"Delete this folder: {folder}", $"Delete the small file {pointer}", "Amberline icon on your desktop", HostFirewall.SignInRule })
                 TestAssert.True(readMe.Contains(phrase, StringComparison.Ordinal), $"READ ME.txt does not say <{phrase}>:\n{readMe}");
             TestAssert.True(screen.ToString().Contains($"Amberline 1.4.0 is installed in {folder}, and its icon is on your desktop.", StringComparison.Ordinal), screen.ToString());
 
             // Outside the folder only the icon and the pointer, which names the folder.
-            TestAssert.Equal("install.json", Entries(Path.Combine(Local(root), "Amberline")), "the profile holds only the pointer");
+            TestAssert.Equal("install.json", Entries(Path.Combine(Local(root), FolderMove.HostName)), "the profile holds only the pointer");
             using (var named = JsonDocument.Parse(File.ReadAllText(pointer)))
                 TestAssert.True(Same(folder, named.RootElement.GetProperty("folder").GetString()), "the pointer names the install folder");
             TestAssert.Equal(HostInstall.ShortcutName, Entries(Desktop(root)), "the desktop holds only the icon");
@@ -78,7 +78,7 @@ public static class HostOneFolderChecks
             TestAssert.True(Same(Path.Combine(folder, "data"), HostPaths.Resolve(null, Local(root), installedPlatform).Data), "the data folder beside app");
             TestAssert.True(Same(Path.Combine(root, "elsewhere"), HostPaths.Resolve(Path.Combine(root, "elsewhere"), Local(root), installedPlatform).Data), "AMBERLINE_PLATFORM_HOME");
             var unpacked = Path.Combine(release, "platform") + Path.DirectorySeparatorChar;
-            TestAssert.True(Same(Path.Combine(Local(root), "Amberline", "data"), HostPaths.Resolve(null, Local(root), unpacked).Data), "an unpacked zip has no install marker");
+            TestAssert.True(Same(Path.Combine(Local(root), FolderMove.HostName, "data"), HostPaths.Resolve(null, Local(root), unpacked).Data), "an unpacked zip has no install marker");
             TestAssert.Equal(null, HostInstall.ForRelease(HostPaths.Resolve(null, Local(root), installedPlatform), Local(root), Desktop(root), TextWriter.Null),
                 "the installed copy runs in place");
             var later = HostInstallChecks.Release(Path.Combine(root, "zip-1.5.0"), "1.5.0");
@@ -217,7 +217,7 @@ public static class HostOneFolderChecks
             var answers = new Queue<string?>([Path.Combine(root, "Programs", "Amberline"), Path.Combine(root, "chosen")]);
             TestAssert.True(asking.AskFolder(answers.Dequeue), asked.ToString());
             TestAssert.True(Same(Path.Combine(root, "chosen"), asking.Folder), "the second answer is taken");
-            TestAssert.True(asked.ToString().Contains(@"Type a folder, or press Enter for C:\Amberline: ", StringComparison.Ordinal) &&
+            TestAssert.True(asked.ToString().Contains($"Type a folder, or press Enter for {HostInstall.DefaultFolder}: ", StringComparison.Ordinal) &&
                 asked.ToString().Contains("Program Files needs administrator rights", StringComparison.Ordinal), asked.ToString());
             TestAssert.False(Installer(root, HostInstallChecks.Release(Path.Combine(root, "zip-1.6.0"), "1.6.0"), null, null, new StringWriter(), [], ("", ""))
                 .AskFolder(() => null), "no answer, no install");
@@ -265,7 +265,7 @@ public static class HostOneFolderChecks
             TestAssert.Equal(0, await install.RunAsync(), screen.ToString());
 
             var installedGame = Path.Combine(folder, @"game\projects\lol_game_client\releases\0.0.0.51");
-            TestAssert.Equal("READ ME.txt, Uninstall Amberline.cmd, air, amberline-install.json, app, data, game", Entries(folder), "the install folder holds only Amberline");
+            TestAssert.Equal($"READ ME.txt, Uninstall Amberline.cmd, air, {FolderMove.InstallMarker}, app, data, game", Entries(folder), "the install folder holds only Amberline");
             TestAssert.Equal(Snapshot(clients.Game), Snapshot(installedGame), "the game came in from the zip");
             TestAssert.Equal(Snapshot(clients.Language), Snapshot(Path.Combine(folder, @"game\projects\lol_game_client_en_us")), "and its language project");
             TestAssert.Equal(Snapshot(clients.Air), Snapshot(Path.Combine(folder, "air")), "the AIR client came in from the zip");

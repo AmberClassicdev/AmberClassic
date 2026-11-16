@@ -22,13 +22,13 @@ public static class HostFirewallChecks
 
     /// <summary>The arguments of a first install, exactly: cmd /d /c, the chain in quotes, each netsh by its full System32 path, joined with &amp;&amp;.</summary>
     private const string FirstInstall =
-        @"/d /c """"C:\Windows\system32\netsh.exe"" advfirewall firewall add rule name=""Amberline sign-in"" dir=in action=allow program=""C:\Amberline Host\app\platform\Amberline.Platform.exe"" protocol=TCP localport=8391 profile=any && ""C:\Windows\system32\netsh.exe"" advfirewall firewall add rule name=""Amberline games"" dir=in action=allow program=""C:\Amberline Host\app\server\Amberline.Server.exe"" protocol=UDP localport=5219-5222 profile=any""";
+        $@"/d /c """"C:\Windows\system32\netsh.exe"" advfirewall firewall add rule name=""{HostFirewall.SignInRule}"" dir=in action=allow program=""C:\Amberline Host\app\platform\Amberline.Platform.exe"" protocol=TCP localport=8391 profile=any && ""C:\Windows\system32\netsh.exe"" advfirewall firewall add rule name=""{HostFirewall.GamesRule}"" dir=in action=allow program=""C:\Amberline Host\app\server\Amberline.Server.exe"" protocol=UDP localport=5219-5222 profile=any""";
     private const string AddSignIn =
-        @"advfirewall firewall add rule name=""Amberline sign-in"" dir=in action=allow program=""C:\Amberline Host\app\platform\Amberline.Platform.exe"" protocol=TCP localport=8391 profile=any";
+        $@"advfirewall firewall add rule name=""{HostFirewall.SignInRule}"" dir=in action=allow program=""C:\Amberline Host\app\platform\Amberline.Platform.exe"" protocol=TCP localport=8391 profile=any";
     private const string AddGames =
-        @"advfirewall firewall add rule name=""Amberline games"" dir=in action=allow program=""C:\Amberline Host\app\server\Amberline.Server.exe"" protocol=UDP localport=5219-5222 profile=any";
-    private const string DeleteSignIn = @"advfirewall firewall delete rule name=""Amberline sign-in""";
-    private const string DeleteGames = @"advfirewall firewall delete rule name=""Amberline games""";
+        $@"advfirewall firewall add rule name=""{HostFirewall.GamesRule}"" dir=in action=allow program=""C:\Amberline Host\app\server\Amberline.Server.exe"" protocol=UDP localport=5219-5222 profile=any";
+    private const string DeleteSignIn = $@"advfirewall firewall delete rule name=""{HostFirewall.SignInRule}""";
+    private const string DeleteGames = $@"advfirewall firewall delete rule name=""{HostFirewall.GamesRule}""";
 
     [Check("server.host-firewall-script-exact")]
     public static void ScriptExact()

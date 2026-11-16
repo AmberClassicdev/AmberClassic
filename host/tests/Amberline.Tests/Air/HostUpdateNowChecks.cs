@@ -35,7 +35,9 @@ public static class HostUpdateNowChecks
             var data = Path.Combine(root, "data");
             var name = HostUpdates.ZipName(Newer);
             var (zipUrl, hashUrl) = (HostUpdates.Asset(Newer, name), HostUpdates.Asset(Newer, name + ".sha256"));
-            TestAssert.Equal($"https://github.com/Amberline-Dev/Project-Amberline/releases/download/{PlatformLine.ReleaseTagPrefix}1.11.0/Amberline-1.11.0-win-x64.zip", zipUrl);
+            // Batch 829: the zip carries the line's home name (patch.json): Amberline-1.11.0-... on 126, Amberline-132-1.11.0-... on 132.
+            var line = JsonDocument.Parse(File.ReadAllText(WorkspaceFiles.Find("patch.json"))).RootElement.GetProperty("home").GetProperty("name").GetString()!.Replace(' ', '-');
+            TestAssert.Equal($"https://github.com/Amberline-Dev/Project-Amberline/releases/download/{PlatformLine.ReleaseTagPrefix}1.11.0/{line}-1.11.0-win-x64.zip", zipUrl);
             var github = FakeReleases.For(root, Newer);
             var zip = github.Files[zipUrl].Body;
             using var client = new HttpClient(github);
@@ -176,7 +178,8 @@ public static class HostUpdateNowChecks
 
         static object Release(string tag, string version, bool draft = false)
         {
-            var zip = $"{HostUpdates.ReleasesPage}/download/{tag}/Amberline-{version}-win-x64.zip";
+            // Batch 829: each line's release carries its own zip name (Amberline-<v> on 126, Amberline-132-<v> on 132).
+            var zip = $"{HostUpdates.ReleasesPage}/download/{tag}/{(tag.StartsWith("p132-", StringComparison.Ordinal) ? "Amberline-132" : "Amberline")}-{version}-win-x64.zip";
             return new
             {
                 tag_name = tag, draft, html_url = $"{HostUpdates.ReleasesPage}/tag/{tag}", body = "notes of " + tag,

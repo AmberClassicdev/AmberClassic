@@ -37,7 +37,7 @@ public static class HostInstallChecks
             var screen = new StringWriter();
             var started = new List<string>();
             var install = Installer(root, release, data, screen, started);
-            TestAssert.Equal(Path.Combine(root, "Local", "Amberline", "app"), install.App, "the copy goes to the user's local application data");
+            TestAssert.Equal(Path.Combine(root, "Local", Amberline.AirCompanion.FolderMove.HostName, "app"), install.App, "the copy goes to the user's local application data");
             TestAssert.Equal(0, await install.RunAsync(), screen.ToString());
 
             var files = Directory.EnumerateFiles(release, "*", SearchOption.AllDirectories).ToArray();
@@ -51,7 +51,7 @@ public static class HostInstallChecks
             TestAssert.False(Directory.Exists(install.App + ".new") || Directory.Exists(install.Previous), "a first install leaves no other folder");
 
             var (target, arguments, folder) = ReadShortcut(install.Shortcut);
-            TestAssert.Equal(Path.Combine(root, "Desktop", "Amberline.lnk"), install.Shortcut);
+            TestAssert.Equal(Path.Combine(root, "Desktop", HostInstall.ShortcutName), install.Shortcut);
             TestAssert.True(string.Equals(install.Installed, target, StringComparison.OrdinalIgnoreCase), $"the icon starts {target}");
             TestAssert.Equal("--home", arguments, "the icon starts the home mode");
             TestAssert.True(string.Equals(Path.Combine(install.App, "platform"), folder, StringComparison.OrdinalIgnoreCase), $"the icon starts in {folder}");

@@ -769,22 +769,26 @@ internal static class PlayerInstallWindow
             return Directory.Exists(folder) && ClassicLauncherFiles.Problem(folder, pins.Launcher) is null ? folder : null;
         }
 
-        /// <summary>The default install folder: on the game client's drive when that is not the system drive (a rename there), else the user's programs folder.</summary>
+        /// <summary>
+        /// The default install folder: on the game client's drive when that is not the system drive (a rename there), else the user's programs folder.
+        /// Batch 829: named after the line's home install (<see cref="FolderMove.HostName"/>), so a 1.0.0.132 player install does not default to the
+        /// 1.0.0.126 one's folder.
+        /// </summary>
         private static string DefaultInstall(PlayerProfile profile, string? game)
         {
             var system = Path.GetPathRoot(Environment.SystemDirectory);
             return game is not null && Path.GetPathRoot(game) is { Length: > 0 } root && !string.Equals(root, system, StringComparison.OrdinalIgnoreCase)
-                ? Path.Combine(root, PlayerInstall.DefaultServerName)
-                : Path.Combine(profile.LocalAppData, "Programs", PlayerInstall.DefaultServerName);
+                ? Path.Combine(root, FolderMove.HostName)
+                : Path.Combine(profile.LocalAppData, "Programs", FolderMove.HostName);
         }
 
-        /// <summary>A picked folder that already holds other files gets its own Amberline folder inside it.</summary>
+        /// <summary>A picked folder that already holds other files gets its own Amberline folder inside it (the line's name, batch 829).</summary>
         private static string InstallFolder(string picked)
         {
             var folder = FolderMove.Full(picked);
             var empty = !Directory.Exists(folder) || !Directory.EnumerateFileSystemEntries(folder).Any();
             var ours = Directory.Exists(Path.Combine(folder, PlayerInstall.ToolFolder)) || Directory.Exists(Path.Combine(folder, "servers"));
-            return empty || ours ? folder : Path.Combine(folder, PlayerInstall.DefaultServerName);
+            return empty || ours ? folder : Path.Combine(folder, FolderMove.HostName);
         }
     }
 

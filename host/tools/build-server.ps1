@@ -120,6 +120,12 @@ $repository = Join-Path $emu $Patch
 # The patch line's facts (patch.json). A 0 -RemotePort or -FirstGamePort (the default) takes the line's port.
 $facts = Get-Content -LiteralPath (Join-Path $repository 'patch.json') -Raw | ConvertFrom-Json
 $patchVersion = $facts.label -replace ' \(.*\)$', ''
+# Batch 829: the line's release name, its home install's name (patch.json home.name, FolderMove.HostName): "Amberline" on 126,
+# "Amberline 132" on 132. It names the zip (spaces as hyphens, as HostUpdates.ZipName does), the notes and READ ME FIRST, and the
+# players' per-user folder (FolderMove.PlayerFolder: the name and " Player").
+$releaseName = [string]$facts.home.name
+$releaseFile = $releaseName.Replace(' ', '-')
+$zipName = "$releaseFile-$Version-win-x64.zip"
 if ($RemotePort -eq 0) { $RemotePort = [int]$facts.ports.remote }
 if ($FirstGamePort -eq 0) { $FirstGamePort = [int]$facts.ports.gameFirst }
 if ($RemotePort -in [int]$facts.ports.web, [int]$facts.ports.rtmp, [int]$facts.ports.chat) { throw "-RemotePort must differ from the loopback ports $($facts.ports.web) (management), $($facts.ports.rtmp) (RTMP) and $($facts.ports.chat) (XMPP)." }
@@ -212,7 +218,7 @@ New-Item -ItemType Directory -Force -Path $app | Out-Null
 # release has neither (its host's Platform makes the certificate at its first start).
 $pin = $null
 if ($Layout -eq 'Server') {
-    $playerFile = @{ Root = $destination; PublicHost = $PublicHost; Port = $RemotePort; ServerName = $ServerName }
+    $playerFile = @{ Root = $destination; PublicHost = $PublicHost; Port = $RemotePort; ServerName = $ServerName; PlayerFolder = "$releaseName Player" }
     if ($Certificate) { $playerFile.Certificate = $Certificate }
     $pin = & (Join-Path $PSScriptRoot 'player-file.ps1') @playerFile
 }
@@ -382,8 +388,12 @@ if ($Layout -eq 'Home') {
     # Batch 682: the pin the zip's guide checks a found game against (the zip has no exehost.c).
     $manifest.Insert(1, 'gameExecutableSha256', (Get-ExpectedExeSha256))
     # The patch line's facts for the zip's guide (tools/guide.ps1 reads them here, as it reads the executable's pin above).
-    $manifest.Insert(2, 'patch', [ordered]@{ line = $Patch; label = $facts.label; clientZip = $facts.clientZip; gameFolder = $facts.gameFolder;
-        airSwf = $facts.airSwf; ports = $facts.ports })
+    # Batch 828: home, the line's install name and marker (the guide's pointer, default folder and own-install test).
+    $patchFacts = [ordered]@{ line = $Patch; label = $facts.label; clientZip = $facts.clientZip; gameFolder = $facts.gameFolder;
+        airSwf = $facts.airSwf; ports = $facts.ports; home = $facts.home }
+    # Batch 828: the AIR client's entries the line adds (132's 1.52 modules), which the guide counts as the client's own; 126 has none.
+    if ($facts.airAddedEntries) { $patchFacts.airAddedEntries = @($facts.airAddedEntries) }
+    $manifest.Insert(2, 'patch', $patchFacts)
 }
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $app 'BUILD.json') -Encoding utf8
 
@@ -405,7 +415,7 @@ if ($Layout -eq 'Home') {
     # the guide started it (AMBERLINE_GUIDE), so a double-click on it asks the guide's questions too.
     $homeStart = @'
 @echo off
-rem Installs Amberline in the folder you choose (C:\Amberline unless you choose another), or updates it, then starts it.
+rem Installs Amberline in the folder you choose (C:\{HOME} unless you choose another), or updates it, then starts it.
 rem START-HERE passes the install folder, the game and the AIR client as arguments; without any, this opens START-HERE.
 rem The installed Amberline goes on running in this window after the program here ends.
 title Amberline
@@ -424,7 +434,7 @@ pause >nul
 exit /b 1
 '@
     $homeReadMe = @'
-AMBERLINE {VERSION}: READ ME FIRST
+{RELEASE} {VERSION}: READ ME FIRST
 ==================================
 
 Amberline hosts the game on patch {LABEL} on your PC for your players.
@@ -437,8 +447,8 @@ STARTING
 1. Unzip the whole zip into a folder.
 2. Double-click START-HERE.cmd. If Windows warns you, see WINDOWS WARNINGS below.
 3. Answer its questions: where the server runs, your game and AIR client folders (it
-   searches for them), and the install folder (press Enter for C:\Amberline). Amberline
-   keeps everything there and puts an Amberline icon on your desktop. You can then
+   searches for them), and the install folder (press Enter for C:\{HOME}). Amberline
+   keeps everything there and puts an {HOME} icon on your desktop. You can then
    delete the zip.
 4. Follow the setup page that opens in your browser.
 5. Keep the Amberline window open while players play.
@@ -460,7 +470,7 @@ WINDOWS WARNINGS
 - "Windows protected your PC": Amberline is not signed. Download the zip only from the
   official Amberline releases page, and check its SHA-256 against the one listed there:
   open PowerShell in its folder and type
-  Get-FileHash .\Amberline-{VERSION}-win-x64.zip
+  Get-FileHash .\{ZIP}
   Then choose More info, and Run anyway.
 - Windows 11's Smart App Control blocks unsigned programs, Amberline too. Amberline never
   asks you to turn protections off.
@@ -468,11 +478,13 @@ WINDOWS WARNINGS
 WHERE AMBERLINE KEEPS ITS DATA
 In the install folder: app, app.previous (the version before the last update), data, game
 and air. Its READ ME.txt says how to remove Amberline. Outside it: only the desktop icon
-and %LOCALAPPDATA%\Amberline\install.json. An Amberline installed before this version stays
-in %LOCALAPPDATA%\Amberline and is updated there.
+and %LOCALAPPDATA%\{HOME}\install.json.{BEFORE637}
 '@
-    Write-HomeFile 'Start Amberline.cmd' $homeStart.Replace('{PLATFORM}', $platformExecutable)
-    Write-HomeFile 'READ ME FIRST.txt' $homeReadMe.Replace('{VERSION}', $Version).Replace('{LABEL}', $facts.label).Replace('{CLIENTZIP}', $facts.clientZip)
+    # Batch 829: installs from before batch 637 exist only on the line released before it. A line without them says so in its patch.json
+    # (homeBefore637 false: 132), and its READ ME FIRST leaves the sentence out; 126 has no such key and keeps it.
+    $before637 = if ($facts.homeBefore637 -ne $false) { " An Amberline installed before this version stays`nin %LOCALAPPDATA%\{HOME} and is updated there." } else { '' }
+    Write-HomeFile 'Start Amberline.cmd' $homeStart.Replace('{PLATFORM}', $platformExecutable).Replace('{HOME}', $facts.home.name)
+    Write-HomeFile 'READ ME FIRST.txt' $homeReadMe.Replace('{BEFORE637}', $before637).Replace('{RELEASE}', $releaseName.ToUpperInvariant()).Replace('{VERSION}', $Version).Replace('{LABEL}', $facts.label).Replace('{CLIENTZIP}', $facts.clientZip).Replace('{ZIP}', $zipName).Replace('{HOME}', $facts.home.name)
     # Batch 682: the one guide, as the repository has it.
     Copy-Item -LiteralPath (Join-Path $repository 'START-HERE.cmd') -Destination $stage
     New-Item -ItemType Directory -Path (Join-Path $stage 'tools') | Out-Null
@@ -540,7 +552,6 @@ Test-ArchiveEntries $companionZip 'companion archive'
 
 if ($Layout -eq 'Home') {
     # The release zip is built in the work folder and scanned like the output; it moves into the release folder only when it passes.
-    $zipName = "Amberline-$Version-win-x64.zip"
     $zip = Join-Path $work $zipName
     [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
     Test-ArchiveEntries $zip 'release zip'
@@ -549,9 +560,9 @@ if ($Layout -eq 'Home') {
     $sha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText("$zipPath.sha256", "$sha  $zipName`n", [Text.Encoding]::ASCII)
     # The notes stub for the release page: the owner writes the changes; the warnings and the hash are already in it.
-    $notesPath = Join-Path $destination "Amberline-$Version-release-notes.md"
+    $notesPath = Join-Path $destination "$releaseFile-$Version-release-notes.md"
     $notes = @'
-# Amberline {VERSION}
+# {RELEASE} {VERSION}
 
 {SOURCE}
 
@@ -567,7 +578,7 @@ if ($Layout -eq 'Home') {
 Windows will warn you because Amberline is new and not signed. Check that you downloaded it from this releases page and that its SHA-256 matches the one above, then choose More info, then Run anyway. On Windows 11 with Smart App Control on, Windows blocks Amberline completely; Amberline cannot change that.
 '@
     $source = if ($gitCheckout) { "Built from source commit $commit, with no local changes." } else { 'Built from a folder without git: the source commit is unknown.' }
-    Set-Content -LiteralPath $notesPath -Value $notes.Replace('{VERSION}', $Version).Replace('{SOURCE}', $source).Replace('{ZIP}', $zipName).Replace('{HASH}', $sha) -Encoding utf8
+    Set-Content -LiteralPath $notesPath -Value $notes.Replace('{RELEASE}', $releaseName).Replace('{VERSION}', $Version).Replace('{SOURCE}', $source).Replace('{ZIP}', $zipName).Replace('{HASH}', $sha) -Encoding utf8
 }
 Remove-Item -LiteralPath $work -Recurse -Force
 $size = [math]::Round((Get-ChildItem -LiteralPath $destination -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB, 1)

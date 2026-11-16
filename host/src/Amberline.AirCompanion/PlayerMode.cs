@@ -20,7 +20,10 @@ internal static class PlayerMode
     private const int MaestroPort = 8393;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
-    /// <summary>The player's stage, per Windows user: <c>%LOCALAPPDATA%\Amberline Player\stage</c> (<see cref="FolderMove.PlayerFolder"/>).</summary>
+    /// <summary>
+    /// The player's stage, per Windows user: <c>%LOCALAPPDATA%\Amberline Player\stage</c> (<see cref="FolderMove.PlayerFolder"/>, the line's own:
+    /// <c>Amberline 132 Player</c> on 1.0.0.132, batch 829).
+    /// </summary>
     internal static string StageRoot()
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

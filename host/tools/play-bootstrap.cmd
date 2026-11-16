@@ -201,7 +201,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($local)) { throw 'Windows has no app data folder for your user. Sign in to Windows with your own account, then try again.' }
     # The per-user folder of the player tool, where PlayerInstall keeps its record (install.json): FolderMove.PlayerFolder, a name
     # apart from the host's Amberline folder.
-    $root = Join-Path $local 'Amberline Player'
+    $root = Join-Path $local '__PLAYER__'
     Write-Host "Connecting to $Name. This takes a few seconds."
     $tool = Update-Companion $server $port $Pin $root
     $connection = Join-Path $root 'server.json'

@@ -21,6 +21,8 @@ patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its f
 
 From then on, start Amberline from its desktop icon, and keep its window open while you play.
 
+**Hosting patch 1.0.0.132 (January 2012)?** Read [132/HOSTING.md](132/HOSTING.md) and [132/TROUBLESHOOTING.md](132/TROUBLESHOOTING.md) instead: that line's releases are tagged `p132-v` and are never the latest release, which is patch 1.0.0.126's.
+
 ## Join a server
 
 1. **Double-click the `Play.cmd`** your host sent you.
@@ -62,7 +64,7 @@ The repository holds two patch lines side by side:
 | Folder | What it is |
 |---|---|
 | `126/` | patch 1.0.0.126 (October 2011), the line the releases are built from |
-| `132/` | patch 1.0.0.132 (January 2012), in progress and not released yet |
+| `132/` | patch 1.0.0.132 (January 2012), released under `p132-v` tags (never the latest release); see [132/HOSTING.md](132/HOSTING.md) |
 | `host/` | every file both lines share, with the same text in both |
 
 A line's folder holds its own projects (`<line>/Amberline.slnx`), the files that differ between the lines and its natives; each

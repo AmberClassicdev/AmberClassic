@@ -95,7 +95,7 @@ public static class HostUninstall
     {
         var folder = FolderMove.Full(Path.Combine(paths.App, "..", ".."));
         var oneFolder = HostPaths.InstallFolder(paths.App) is not null;
-        if (!oneFolder && (localAppData is null || !FolderMove.Same(folder, Path.Combine(localAppData, "Amberline")))) return null;
+        if (!oneFolder && (localAppData is null || !FolderMove.Same(folder, Path.Combine(localAppData, FolderMove.HostName)))) return null;
         var parts = Known.Select(known => (Known: known, Path: Path.Combine(folder, known.Name)))
             .Where(item => Directory.Exists(item.Path) || File.Exists(item.Path))
             .Select(item => new UninstallPart(item.Path, item.Known.What, item.Known.Kind, Bytes(item.Path))).ToList();

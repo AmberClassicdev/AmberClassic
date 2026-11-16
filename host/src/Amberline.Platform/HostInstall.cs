@@ -214,9 +214,13 @@ public sealed record InstallRules(IReadOnlyList<string> OneDrive, IReadOnlyList<
 /// </summary>
 public sealed class HostInstall(HostPaths paths, string localAppData, string desktop, TextWriter screen)
 {
-    public const string ShortcutName = "Amberline.lnk";
-    /// <summary>The install folder offered first (owner, 2 November 2026): it needs no administrator rights and is outside OneDrive.</summary>
-    public const string DefaultFolder = @"C:\Amberline";
+    /// <summary>The desktop icon: Amberline.lnk on 1.0.0.126, "Amberline 132.lnk" on 1.0.0.132 (batch 828: the line's <see cref="FolderMove.HostName"/>).</summary>
+    public const string ShortcutName = FolderMove.HostName + ".lnk";
+    /// <summary>
+    /// The install folder offered first (owner, 2 November 2026): it needs no administrator rights and is outside OneDrive. C:\Amberline on
+    /// 1.0.0.126, C:\Amberline 132 on 1.0.0.132 (batch 828).
+    /// </summary>
+    public const string DefaultFolder = @"C:\" + FolderMove.HostName;
     public const string ReadMeName = "READ ME.txt";
     // 120 tries of half a second: an old Amberline that just stopped may take a while to end its matches and release its folder.
     private const int Tries = 120;
@@ -242,7 +246,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     /// <summary>The update was confirmed on the page (<see cref="ConfirmedOption"/>): <see cref="Confirm"/> is not asked. Nothing else changes.</summary>
     public bool Confirmed { get; init; }
 
-    public string App => Folder is null ? Path.GetFullPath(Path.Combine(localAppData, "Amberline", "app")) : Path.Combine(Folder, "app");
+    public string App => Folder is null ? Path.GetFullPath(Path.Combine(localAppData, FolderMove.HostName, "app")) : Path.Combine(Folder, "app");
     public string Previous => App + ".previous";
     private string Staging => App + ".new";
     public string Shortcut { get; } = Path.Combine(desktop, ShortcutName);

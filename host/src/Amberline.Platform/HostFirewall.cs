@@ -59,8 +59,10 @@ public sealed record FirewallProblem(string Code, string Message, string WhatToD
 /// </summary>
 public static class HostFirewall
 {
-    public const string SignInRule = "Amberline sign-in";
-    public const string GamesRule = "Amberline games";
+    // Batch 828: the line's name (Folders.FolderMove.HostName), so the 1.0.0.132 install's rules ("Amberline 132 sign-in") never replace
+    // or remove the 1.0.0.126 install's ("Amberline sign-in") on the same PC.
+    public const string SignInRule = Folders.FolderMove.HostName + " sign-in";
+    public const string GamesRule = Folders.FolderMove.HostName + " games";
 
     /// <summary>ERROR_CANCELLED: the user declined the Windows prompt.</summary>
     private const int ErrorCancelled = 1223;

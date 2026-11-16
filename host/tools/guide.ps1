@@ -546,12 +546,15 @@ function Save-Choice {
 }
 
 # Batch 637, the one-folder install. The marker and the pointer are HostInstall's (FolderMove.InstallMarker, FolderMove.PointerPath).
-$installMarker = 'amberline-install.json'
-$defaultInstall = 'C:\Amberline'
-# The install folder %LOCALAPPDATA%\Amberline\install.json names, while it still holds the marker; else $null.
+# Batch 828: both are the line's own (patch.json "home": Amberline and amberline-install.json on 126, Amberline 132 and
+# amberline-132-install.json on 132), so an install of the other line is another program: never offered for an update or replaced.
+$homeName = [string]$facts.home.name
+$installMarker = [string]$facts.home.marker
+$defaultInstall = 'C:\' + $homeName
+# The install folder %LOCALAPPDATA%\<home name>\install.json names, while it still holds the marker; else $null.
 function Get-Installed {
     try {
-        $folder = (Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Amberline\install.json') -Raw | ConvertFrom-Json).folder
+        $folder = (Get-Content -LiteralPath (Join-Path (Join-Path $env:LOCALAPPDATA $homeName) 'install.json') -Raw | ConvertFrom-Json).folder
         if ($folder -and (Test-Path -LiteralPath (Join-Path $folder $installMarker) -PathType Leaf)) { return [string]$folder }
     } catch { }
     $null
@@ -617,9 +620,10 @@ function Get-Bytes([string]$Path) {
     foreach ($file in [IO.Directory]::EnumerateFiles($Path, '*', 'AllDirectories')) { $sum += (New-Object IO.FileInfo $file).Length }
     $sum
 }
-# The AIR client's own files, as HostInstall takes them (FolderMove.AirEntries); anything else in its folder stays.
-$airEntries = 'Adobe AIR', 'META-INF', 'assets', 'css', 'logs', 'LolClient.exe', 'LolClient.swf', 'mimetype', 'mod_lgn.dat', 'mod_man.dat',
-    'mod_ser.dat', 'version.txt', 'lol.properties', 'locale.properties', 'lol.properties.stock', 'locale.properties.stock'
+# The AIR client's own files, as HostInstall takes them (FolderMove.AirEntries); anything else in its folder stays. Batch 828: plus the
+# line's own additions (patch.json airAddedEntries, CompanionLine.AddedAirEntries: the three 1.52 modules on 132; none on 126).
+$airEntries = @('Adobe AIR', 'META-INF', 'assets', 'css', 'logs', 'LolClient.exe', 'LolClient.swf', 'mimetype', 'mod_lgn.dat', 'mod_man.dat',
+    'mod_ser.dat', 'version.txt', 'lol.properties', 'locale.properties', 'lol.properties.stock', 'locale.properties.stock') + @($facts.airAddedEntries | Where-Object { $_ })
 function Format-Gigabytes([long]$Bytes) { ($Bytes / 1e9).ToString('0.0', [Globalization.CultureInfo]::InvariantCulture) + ' GB' }
 $openIt = 'To open Amberline: double-click its desktop icon.'
 # Batch 682: starts a Start Amberline.cmd in a new window, after unpacking $Zip into $Folder when one is given; a dry run only
@@ -650,7 +654,7 @@ try {
 
     # Batch 645: the Amberline on this PC (the pointer's install, or one from before batch 637 in the user folder) and its version.
     $installed = Get-Installed
-    $app = if ($installed) { Join-Path $installed 'app' } else { Join-Path $env:LOCALAPPDATA 'Amberline\app' }
+    $app = if ($installed) { Join-Path $installed 'app' } else { Join-Path (Join-Path $env:LOCALAPPDATA $homeName) 'app' }
     $legacy = -not $installed -and (Test-Path -LiteralPath (Join-Path $app 'BUILD.json') -PathType Leaf)
     $update = [bool]($installed -or $legacy)
     $have = if ($update) { Get-AppVersion $app }
@@ -900,7 +904,8 @@ try {
             Say "Building Amberline $version into:"
             SayPath $output
             Invoke-Build ([ordered]@{ Layout = 'Home'; Version = $version; GameRoot = $buildFrom.gameRoot; AirRoot = $buildFrom.airRoot; Output = $output }) $found['pwsh']
-            $zip = Join-Path $output "Amberline-$version-win-x64.zip"
+            # Batch 829: the line's zip name, as build-server.ps1 writes it (the home name with hyphens: Amberline-132-<v> on 132).
+            $zip = Join-Path $output "$($homeName.Replace(' ', '-'))-$version-win-x64.zip"
             $unpacked = Join-Path $output 'Amberline'
         }
 

@@ -31,6 +31,13 @@ internal static class FolderMove
     /// <summary>Where the game goes: a RADS-shaped path, so the managed layout (GameManagedLayout) is built on any drive.</summary>
     internal const string GameRelease = @"game\projects\lol_game_client\releases\0.0.0.51";
 
+    /// <summary>
+    /// This line's home install (batch 828): the per-user folder (<c>%LOCALAPPDATA%\Amberline</c>: the pointer, and the data of a start
+    /// outside an install), the default install folder (<c>C:\Amberline</c>), the desktop icon and the firewall rules' names, as before.
+    /// The 1.0.0.132 line has its own in its copy of this file ("Amberline 132"), so the two lines' installs never meet.
+    /// </summary>
+    internal const string HostName = "Amberline";
+
     /// <summary>The file at the root of a host's one-folder install; the installed program finds its data folder beside it.</summary>
     internal const string InstallMarker = "amberline-install.json";
 
@@ -55,7 +62,7 @@ internal static class FolderMove
     internal sealed record MoveOptions(Func<string, string, bool>? SameDrive = null, Action<string>? AfterCopy = null);
 
     /// <summary>The per-user pointer to a host's one-folder install: <c>%LOCALAPPDATA%\Amberline\install.json</c> naming its folder.</summary>
-    internal static string PointerPath(string localAppData) => Path.Combine(localAppData, "Amberline", "install.json");
+    internal static string PointerPath(string localAppData) => Path.Combine(localAppData, HostName, "install.json");
 
     /// <summary>
     /// The player tool's per-user folder (batch 647): Play.cmd's download, the install record, the logs, the play mode's stage. A name

@@ -87,7 +87,12 @@ public static class HostUpdates
     /// <summary>Where Update now downloads and unpacks a release: in the data folder, which every install keeps across updates.</summary>
     public static string UpdatesFolder(string data) => Path.Combine(data, "updates");
 
-    public static string ZipName(Version version) => $"Amberline-{version}-win-x64.zip";
+    /// <summary>
+    /// The line's release zip (tools/build-server.ps1 names it the same way): the home install's name with hyphens for spaces
+    /// (<see cref="Folders.FolderMove.HostName"/>, patch.json home.name). Batch 829: <c>Amberline-1.2.3-win-x64.zip</c> on 1.0.0.126 as before,
+    /// <c>Amberline-132-1.2.3-win-x64.zip</c> on 1.0.0.132, so the two lines' zips never share a name.
+    /// </summary>
+    public static string ZipName(Version version) => $"{Folders.FolderMove.HostName.Replace(' ', '-')}-{version}-win-x64.zip";
 
     /// <summary>
     /// A release file's only accepted address: the project's own release of that version on this line (tags are the line's prefix and

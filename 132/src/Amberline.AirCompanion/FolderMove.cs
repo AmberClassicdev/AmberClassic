@@ -31,8 +31,18 @@ internal static class FolderMove
     /// <summary>Where the game goes: a RADS-shaped path, so the managed layout (GameManagedLayout) is built on any drive.</summary>
     internal const string GameRelease = @"game\projects\lol_game_client\releases\0.0.0.51";
 
-    /// <summary>The file at the root of a host's one-folder install; the installed program finds its data folder beside it.</summary>
-    internal const string InstallMarker = "amberline-install.json";
+    /// <summary>
+    /// NOT RETAIL (batch 828): this line's home install, apart from the 1.0.0.126 line's on the same PC. Its name is the per-user folder
+    /// (<c>%LOCALAPPDATA%\Amberline 132</c>: the pointer, and the data of a start outside an install), the default install folder
+    /// (<c>C:\Amberline 132</c>), the desktop icon and the firewall rules' names. The 1.0.0.126 line keeps "Amberline" in its copy of this file.
+    /// </summary>
+    internal const string HostName = "Amberline 132";
+
+    /// <summary>
+    /// The file at the root of a host's one-folder install; the installed program finds its data folder beside it. Batch 828: this line's own
+    /// name, so neither line's installer takes the other line's install folder for its own (the 1.0.0.126 line's is amberline-install.json).
+    /// </summary>
+    internal const string InstallMarker = "amberline-132-install.json";
 
     /// <summary>
     /// The top-level files and folders of the stock 1.0.0.126 AIR client (the reference lol_air_client, its configured properties
@@ -56,21 +66,24 @@ internal static class FolderMove
     /// <summary>DIAGNOSTICS: test seams of the move. SameDrive replaces the drive test; AfterCopy runs on each copied file.</summary>
     internal sealed record MoveOptions(Func<string, string, bool>? SameDrive = null, Action<string>? AfterCopy = null);
 
-    /// <summary>The per-user pointer to a host's one-folder install: <c>%LOCALAPPDATA%\Amberline\install.json</c> naming its folder.</summary>
-    internal static string PointerPath(string localAppData) => Path.Combine(localAppData, "Amberline", "install.json");
+    /// <summary>The per-user pointer to a host's one-folder install: <c>%LOCALAPPDATA%\Amberline 132\install.json</c> naming its folder.</summary>
+    internal static string PointerPath(string localAppData) => Path.Combine(localAppData, HostName, "install.json");
 
     /// <summary>
     /// The player tool's per-user folder (batch 647): Play.cmd's download, the install record, the logs, the play mode's stage. A name
-    /// of its own, so it never lies inside the host's <c>%LOCALAPPDATA%\Amberline</c> (pointer, data), also after the public rename.
+    /// of its own, so it never lies inside the host's <c>%LOCALAPPDATA%\Amberline 132</c> (pointer, data), also after the public rename.
+    /// NOT RETAIL (batch 829): this line's own, the home install's name and " Player" (<c>%LOCALAPPDATA%\Amberline 132 Player</c>), so a
+    /// friend who also plays on a 1.0.0.126 server keeps two player installs that never meet (that line's is <c>Amberline Player</c>).
     /// </summary>
-    internal static string PlayerFolder(string localAppData) => Path.Combine(localAppData, "Amberline Player");
+    internal static string PlayerFolder(string localAppData) => Path.Combine(localAppData, HostName + " Player");
 
     /// <summary>
-    /// The player tool's folder before batch 647. The public build's rename put it inside the host's folder, so it moved; it is read as
-    /// a fallback (an older Play file still downloads into it) and emptied by the player's removal, which then removes its parent too once
-    /// that is empty.
+    /// The player tool's folder before batch 647, read as a fallback and emptied by the player's removal (which then removes its parent
+    /// too once that is empty). Batch 829: this line had no player tool before batch 647, and that folder (<c>%LOCALAPPDATA%\Amberline\player</c>)
+    /// is the 1.0.0.126 line's. So here it is a name inside this line's own player folder that nothing writes: the fallback finds nothing,
+    /// and neither the fallback nor the removal ever reaches the other line's folder.
     /// </summary>
-    internal static string OldPlayerFolder(string localAppData) => Path.Combine(localAppData, "Amberline", "player");
+    internal static string OldPlayerFolder(string localAppData) => Path.Combine(PlayerFolder(localAppData), "before-647");
 
     /// <summary>The player install records a host on this PC reads: the current one, then the one from before batch 647.</summary>
     internal static string[] PlayerRecords(string localAppData) =>

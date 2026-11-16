@@ -30,7 +30,7 @@ public static class HostModeChecks
             var local = Path.Combine(root, "Local");
             var app = Path.Combine(root, "app", "platform");
             var paths = HostPaths.Resolve(null, local, app);
-            TestAssert.Equal(Path.Combine(local, "Amberline", "data"), paths.Data, "the data folder is in the user's local application data");
+            TestAssert.Equal(Path.Combine(local, Amberline.AirCompanion.FolderMove.HostName, "data"), paths.Data, "the data folder is in the user's local application data");
             TestAssert.Equal(paths.Data, HostPaths.Resolve("  ", local, app).Data, "a blank AMBERLINE_PLATFORM_HOME is unset");
             TestAssert.Equal(Path.Combine(root, "elsewhere"), HostPaths.Resolve(Path.Combine(root, "elsewhere"), local, app).Data,
                 "AMBERLINE_PLATFORM_HOME wins");

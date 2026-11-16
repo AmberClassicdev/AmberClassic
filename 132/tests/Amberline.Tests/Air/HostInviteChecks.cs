@@ -231,8 +231,10 @@ public static class HostInviteChecks
             TestAssert.Equal(PlatformBootstrap.RenderLauncher(File.ReadAllText(source).ReplaceLineEndings("\r\n"), TestHost, home.RemotePort, pin, "Test Server"),
                 text, "the template rendered with the server's name, address, public port and pin");
             TestAssert.False(Regex.IsMatch(text, "(?<!\r)\n"), "CRLF line ends throughout: cmd.exe reads the file");
-            foreach (var placeholder in new[] { "__HOST__", "__PORT__", "__CERT__", "__NAME__" })
+            foreach (var placeholder in new[] { "__HOST__", "__PORT__", "__CERT__", "__NAME__", "__PLAYER__" })
                 TestAssert.False(text.Contains(placeholder, StringComparison.Ordinal), placeholder + " is filled in");
+            // Batch 829: the friend's download goes into this line's own player folder, never the 1.0.0.126 line's Amberline Player.
+            TestAssert.True(text.Contains("$root = Join-Path $local 'Amberline 132 Player'", StringComparison.Ordinal), "the line's player folder");
             TestAssert.False(text.Contains(TestHost, StringComparison.OrdinalIgnoreCase), "the address is never in plain text");
             var token = Regex.Match(text, "\\$HostToken = '([^']+)'").Groups[1].Value;
             TestAssert.Equal(TestHost, Encoding.ASCII.GetString(Convert.FromBase64String(token).Select(b => (byte)(b ^ 0x5A)).ToArray()), "the host token decodes");
@@ -244,7 +246,8 @@ public static class HostInviteChecks
                 var built = Path.Combine(home.Root, "player-file");
                 var result = AirBootstrapChecks.RunPowerShell("pwsh", ["-File", AirBootstrapChecks.FindWorkspaceFile(Path.Combine("tools", "player-file.ps1")),
                     "-Root", built, "-PublicHost", TestHost, "-Port", home.RemotePort.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    "-Certificate", Path.Combine(home.Loop.Paths.Data, "remote", "host.pfx"), "-ServerName", "Test Server"]);
+                    "-Certificate", Path.Combine(home.Loop.Paths.Data, "remote", "host.pfx"), "-ServerName", "Test Server",
+                    "-PlayerFolder", PlatformBootstrap.PlayerFolderName]);
                 TestAssert.Equal(0, result.ExitCode, result.Output);
                 TestAssert.Equal(File.ReadAllText(Path.Combine(built, "Play.cmd")), text, "the page's Play file equals tools/player-file.ps1's");
             }

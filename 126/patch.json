@@ -2,6 +2,7 @@
   "label": "1.0.0.126 (October 2011)",
   "clientZip": "patch-1.0.0.126-client-bundle.zip",
   "releaseTagPrefix": "v",
+  "home": { "name": "Amberline", "marker": "amberline-install.json" },
   "gameFolder": "the 1.0.0.126 game release folder (releases/0.0.0.51)",
   "airSwf": { "name": "LolClient.swf", "size": 6944733 },
   "ports": { "web": 8390, "remote": 8391, "rtmp": 2099, "chat": 5222, "gameFirst": 5219, "gameLast": 5222 }

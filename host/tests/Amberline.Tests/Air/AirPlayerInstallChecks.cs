@@ -507,6 +507,9 @@ public static class AirPlayerInstallChecks
             TestAssert.Equal("Install", ((System.Windows.Forms.Control)window.AcceptButton!).AccessibleName);
             TestAssert.Equal("Cancel", ((System.Windows.Forms.Control)window.CancelButton!).AccessibleName);
             TestAssert.True(Find(window, "Install").Enabled, "the found clients do not make a plan: " + Find(window, "Notes").Text);
+            // Batch 829: the default install folder is the line's own (Amberline on 1.0.0.126, Amberline 132 on 1.0.0.132).
+            TestAssert.True(Find(window, "Install folder").Text.EndsWith(@"\" + FolderMove.HostName, StringComparison.Ordinal),
+                "the default install folder: " + Find(window, "Install folder").Text);
             // An offer: its size beside the button; with clients found, Enter still installs them.
             window.ShowOffer(new([new("air/LolClient.exe", 1, new string('0', 64))], 2_600_000_000));
             TestAssert.Equal("No copy of your own? Alpha can send you the game and the AIR client (2.6 GB).", Find(window, "Download from the server").Text);
@@ -768,6 +771,102 @@ public static class AirPlayerInstallChecks
         PlayerUninstall.RemoveAll(fixture.Profile, moved!, deleteGame: false);
         return string.Join(", ", new[] { Directory.Exists(old) ? "player" : null, Directory.Exists(parent) ? "Amberline" : null }.OfType<string>());
     }
+
+    /// <summary>
+    /// Batch 829: a friend who plays on a 1.0.0.126 and a 1.0.0.132 server keeps two player installs that never meet. The other line's install
+    /// is laid out as its installer leaves it, under its own name from the other line's patch.json: its per-user folder (record, download,
+    /// log), its install folder (tool, a server, the clients, Uninstall.cmd, the shortcut's copy) and its desktop shortcut (a real shell link);
+    /// on 1.0.0.132 also the 1.0.0.126 line's folder from before batch 647, with a record. This line's installer refuses that install folder,
+    /// then installs beside it, adds a server, removes one and removes itself with the game files: every file of the other line's stays byte
+    /// for byte. The "Apps" entries differ by name only: the check's profile never writes the registry.
+    /// </summary>
+    [Check("server.air-player-lines-apart", TimeoutSeconds = 300)]
+    public static void TheTwoLinesPlayerInstallsNeverMeet() => WithRoot("league-air-lines-apart", root =>
+    {
+        var fixture = Fixture.Make(root);
+        var profile = fixture.Profile;
+        var local = profile.LocalAppData;
+        string other;
+        using (var sibling = JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(WorkspaceFiles.PatchFolder)!,
+                   WorkspaceFiles.Patch == "132" ? "126" : "132", "patch.json"))))
+            other = sibling.RootElement.GetProperty("home").GetProperty("name").GetString()!;
+        TestAssert.False(other == FolderMove.HostName, "the other line's home name is this line's");
+
+        // The other line's player install.
+        var otherPlayer = Path.Combine(local, other + " Player");
+        var otherInstall = Path.Combine(root, "other", other);
+        const string otherId = "c3c3c3c3c3c3c3c3";
+        var otherRecord = JsonSerializer.Serialize(new
+        {
+            install = otherInstall, air = Path.Combine(otherInstall, "air"), game = Path.Combine(otherInstall, FolderMove.GameRelease),
+        });
+        var otherTool = Path.Combine(otherInstall, PlayerInstall.ToolFolder);
+        var otherFiles = new Dictionary<string, string>
+        {
+            [Path.Combine(otherPlayer, "install.json")] = otherRecord,
+            [Path.Combine(otherPlayer, "server.json")] = "{}",
+            [Path.Combine(otherPlayer, PlayerInstall.ToolFolder + ".sha256")] = new string('9', 64),
+            [Path.Combine(otherPlayer, PlayerInstall.ToolFolder, "Amberline.AirCompanion.exe")] = "the other line's download",
+            [Path.Combine(otherPlayer, "logs", "install.log")] = "the other line's log",
+            [Path.Combine(otherTool, PlayerInstall.WindowlessName)] = "the other line's tool",
+            [Path.Combine(otherInstall, "servers", otherId, "server.json")] = "{}",
+            [Path.Combine(otherInstall, "air", "LolClient.exe")] = "the other line's AIR client",
+            [Path.Combine(otherInstall, FolderMove.GameRelease, "League of Legends.exe")] = "the other line's game",
+            [Path.Combine(otherInstall, PlayerInstall.UninstallFile)] = PlayerInstall.Uninstaller,
+        };
+        // The folder from before batch 647 (Amberline\player) is the 1.0.0.126 line's alone, with a record a fallback could take.
+        if (WorkspaceFiles.Patch != "126")
+        {
+            var old = Path.Combine(local, "Amberline", "player");
+            otherFiles[Path.Combine(old, "install.json")] = otherRecord;
+            otherFiles[Path.Combine(old, "server.json")] = "{}";
+            otherFiles[Path.Combine(old, PlayerInstall.ToolFolder, "Amberline.AirCompanion.exe")] = "the 1.0.0.126 line's older download";
+        }
+        foreach (var (path, text) in otherFiles)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, text);
+        }
+        // Its server's desktop shortcut and the copy in its install folder, named Alpha like this line's first server below.
+        var otherLink = new ShellLink.Link(Path.Combine(otherTool, PlayerInstall.WindowlessName), "--shortcut " + otherId, otherTool,
+            Path.Combine(otherInstall, FolderMove.GameRelease, "League of Legends.exe"), 0, "Play the game on Alpha");
+        var otherShortcut = Path.Combine(profile.Desktop, "Alpha.lnk");
+        ShellLink.Write(otherShortcut, otherLink);
+        ShellLink.Write(Path.Combine(otherInstall, "Alpha.lnk"), otherLink);
+        var folders = new[] { otherPlayer, otherInstall, Path.Combine(local, "Amberline") }.Where(Directory.Exists).ToArray();
+        Dictionary<string, string> Snapshot() => folders.SelectMany(folder => Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+            .Append(otherShortcut).ToDictionary(path => path, Fixture.Hash);
+        var before = Snapshot();
+
+        // This line's names are its own: the per-user folder, the Apps entry's key and name, the default install folder's name.
+        TestAssert.Equal(Path.Combine(local, FolderMove.HostName + " Player"), profile.PlayerFolder, "the player's per-user folder");
+        TestAssert.False(FolderMove.Overlaps(profile.PlayerFolder, otherPlayer), "the two lines' per-user folders overlap");
+        TestAssert.Equal(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + FolderMove.HostName, PlayerUninstall.AppsKey, "the Apps entry's key");
+        TestAssert.False(PlayerUninstall.AppsKey.EndsWith(@"\" + other, StringComparison.OrdinalIgnoreCase), "the Apps entry's key is the other line's");
+        TestAssert.False(profile.WritesRegistry, "a check's profile may write the registry");
+
+        // The other line's install folder is refused (it already holds an AIR client), before anything changes.
+        Refused(() => PlayerInstall.MakePlan(profile, fixture.Air, fixture.Game, otherInstall, fixture.Pins), "already has a folder for the AIR client");
+        TestAssert.Equal(null, PlayerInstall.ReadRecord(profile), "this line read the other line's record");
+
+        // Install beside it, a second server, one removed, then all of it with the game files.
+        var alpha = PlayerInstall.Install(profile, fixture.Plan(), Connection("one.example.test", PinA), "Alpha", fixture.Tool);
+        TestAssert.Equal(Path.Combine(profile.Desktop, "Alpha 2.lnk"), alpha.Shortcut, "the other line's Alpha shortcut is numbered past, never taken");
+        TestAssert.Equal(alpha.Record, PlayerInstall.ReadRecord(profile), "this line's record");
+        TestAssert.Equal(FolderMove.HostName, PlayerUninstall.AppsEntry(alpha.Record)["DisplayName"], "the Apps entry's name");
+        var bravo = PlayerInstall.AddServer(profile, alpha.Record, Connection("two.example.test", PinB), "Bravo");
+        PlayerUninstall.RemoveServer(profile, PlayerUninstall.Servers(alpha.Record.Install).Single(server => server.Name == "Bravo"));
+        TestAssert.False(File.Exists(bravo.Shortcut), "Bravo's shortcut is left");
+        var removal = PlayerUninstall.RemoveAll(profile, alpha.Record, deleteGame: true);
+        TestAssert.Equal(0, removal.Left.Count, string.Join(", ", removal.Left));
+        TestAssert.False(Directory.Exists(alpha.Record.Install) || Directory.Exists(profile.PlayerFolder), "this line's install or per-user folder is left");
+
+        var after = Snapshot();
+        TestAssert.Equal(string.Join(", ", before.Keys.Order(StringComparer.Ordinal)), string.Join(", ", after.Keys.Order(StringComparer.Ordinal)),
+            "the other line's files");
+        foreach (var (path, hash) in before) TestAssert.Equal(hash, after[path], $"the other line's {path} changed");
+        TestAssert.True(PlayerInstall.IsOurShortcut(otherShortcut, otherId), "the other line's desktop shortcut is not its own any more");
+    });
 
     [Check("server.air-player-shortcut-start-dialogs", TimeoutSeconds = 300)]
     public static void TheShortcutsStartIsNeverSilent() => ShortcutStartAsync().GetAwaiter().GetResult();

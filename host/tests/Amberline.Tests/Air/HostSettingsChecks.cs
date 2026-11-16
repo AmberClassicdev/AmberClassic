@@ -405,7 +405,7 @@ public static class HostSettingsChecks
         // Home's folder as a one-folder install: the AIR copy inside it (Home's), the game outside it (the shipped release), a read-only
         // file in the program, the version before, and a file of the host's own, which is not Amberline's.
         var root = home.Root;
-        File.WriteAllText(Path.Combine(root, "amberline-install.json"), "{}");
+        File.WriteAllText(Path.Combine(root, Amberline.AirCompanion.FolderMove.InstallMarker), "{}");
         File.WriteAllText(Path.Combine(root, HostInstall.ReadMeName), "AMBERLINE");
         File.WriteAllText(Path.Combine(root, HostUninstall.CommandName), HostUninstall.Command);
         Directory.CreateDirectory(Path.Combine(root, "app.previous"));
@@ -419,7 +419,7 @@ public static class HostSettingsChecks
         File.WriteAllText(Path.Combine(root, "my notes.txt"), "the host's own file");
         var icon = Path.Combine(places.Desktop!, HostInstall.ShortcutName);
         Shortcut(icon, platform);
-        var pointer = Path.Combine(places.LocalAppData!, "Amberline", "install.json");
+        var pointer = Path.Combine(places.LocalAppData!, Amberline.AirCompanion.FolderMove.HostName, "install.json");
         Directory.CreateDirectory(Path.GetDirectoryName(pointer)!);
         File.WriteAllText(pointer, JsonSerializer.Serialize(new { folder = root }));
         var gameExe = Path.Combine(home.Game, HostFolders.GameExecutable);
@@ -484,7 +484,7 @@ public static class HostSettingsChecks
         var netsh = Path.Combine(Environment.SystemDirectory, "netsh.exe");
         TestAssert.Equal(1, commands.Count, "Windows asks once");
         TestAssert.Equal(Path.Combine(Environment.SystemDirectory, "cmd.exe"), commands[0].FileName);
-        TestAssert.Equal($"/d /c \"\"{netsh}\" advfirewall firewall delete rule name=\"Amberline sign-in\" && \"{netsh}\" advfirewall firewall delete rule name=\"Amberline games\"\"",
+        TestAssert.Equal($"/d /c \"\"{netsh}\" advfirewall firewall delete rule name=\"{HostFirewall.SignInRule}\" && \"{netsh}\" advfirewall firewall delete rule name=\"{HostFirewall.GamesRule}\"\"",
             commands[0].Arguments, "the elevated command deletes the two rules only");
         TestAssert.True(HostFirewall.RemoveCommand([Rule("A rule of another program")], Environment.SystemDirectory) is null, "no rule of Amberline's: nothing to ask");
         TestAssert.False(File.Exists(icon) || File.Exists(pointer) || Directory.Exists(Path.GetDirectoryName(pointer)), "the icon, the pointer and its folder are gone");
@@ -493,7 +493,7 @@ public static class HostSettingsChecks
             TestAssert.True(note.Contains(phrase, StringComparison.Ordinal), $"the kept note says <{phrase}>:\n{note}");
 
         await CleanUpAsync(home.Loop.Cleanup, root, places.Temp!);
-        TestAssert.Equal("READ ME.txt, amberline-install.json, data, my notes.txt", Entries(root), "what was kept stays, the rest is gone");
+        TestAssert.Equal($"READ ME.txt, {Amberline.AirCompanion.FolderMove.InstallMarker}, data, my notes.txt", Entries(root), "what was kept stays, the rest is gone");
         TestAssert.Equal(gameBefore, File.Exists(gameExe), "the game folder outside the install is untouched");
         Delete(root);
     }
@@ -514,7 +514,7 @@ public static class HostSettingsChecks
             Directory.CreateDirectory(Path.GetDirectoryName(file)!);
             File.WriteAllText(file, "stand-in");
         }
-        File.WriteAllText(Path.Combine(folder, "amberline-install.json"), "{}");
+        File.WriteAllText(Path.Combine(folder, Amberline.AirCompanion.FolderMove.InstallMarker), "{}");
         File.WriteAllText(Path.Combine(folder, HostUninstall.CommandName), HostUninstall.Command);
         // A free port, so the window's "is Amberline running" question never reaches a real one.
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -527,7 +527,7 @@ public static class HostSettingsChecks
         File.WriteAllText(another, "stand-in");
         var icon = Path.Combine(places.Desktop!, HostInstall.ShortcutName);
         Shortcut(icon, another);
-        var pointer = Path.Combine(places.LocalAppData!, "Amberline", "install.json");
+        var pointer = Path.Combine(places.LocalAppData!, Amberline.AirCompanion.FolderMove.HostName, "install.json");
         Directory.CreateDirectory(Path.GetDirectoryName(pointer)!);
         File.WriteAllText(pointer, JsonSerializer.Serialize(new { folder }));
         var paths = HostPaths.Resolve(null, places.LocalAppData!, Path.Combine(folder, "app", "platform"));
@@ -567,12 +567,12 @@ public static class HostSettingsChecks
         TestAssert.True(HostUninstall.Plan(HostPaths.Resolve(null, Path.Combine(outside, "Local"), development), settings, Path.Combine(outside, "Local")) is null,
             "a development build is not installed");
         var local = Path.Combine(outside, "Old");
-        var old = Path.Combine(local, "Amberline", "app", "platform");
+        var old = Path.Combine(local, Amberline.AirCompanion.FolderMove.HostName, "app", "platform");
         Directory.CreateDirectory(old);
-        Directory.CreateDirectory(Path.Combine(local, "Amberline", "data"));
+        Directory.CreateDirectory(Path.Combine(local, Amberline.AirCompanion.FolderMove.HostName, "data"));
         var paths = HostPaths.Resolve(null, local, old);
         var plan = HostUninstall.Plan(paths, settings, local)!;
-        TestAssert.True(!plan.OneFolder && plan.Folder == Path.Combine(local, "Amberline") && plan.Others.Count == 0, $"the old install folder: {plan.Folder}");
+        TestAssert.True(!plan.OneFolder && plan.Folder == Path.Combine(local, Amberline.AirCompanion.FolderMove.HostName) && plan.Others.Count == 0, $"the old install folder: {plan.Folder}");
         TestAssert.Equal("app, data", string.Join(", ", plan.Parts.Select(part => Path.GetFileName(part.Path))), "its program and its data");
         TestAssert.True(HostUninstall.Plan(paths, settings, null) is null, "without the profile folder it is not recognised");
         TestAssert.True(HostUninstall.Command.Contains("\"%~dp0app\\platform\\" + HostInstall.PlatformFile + "\" --uninstall & exit /b\r\n", StringComparison.Ordinal),

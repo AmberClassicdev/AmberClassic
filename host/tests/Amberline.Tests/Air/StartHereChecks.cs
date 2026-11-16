@@ -26,6 +26,13 @@ public static class StartHereChecks
         System.Text.Json.JsonDocument.Parse(File.ReadAllText(WorkspaceFiles.Find("patch.json"))).RootElement;
     private static string PatchVersion() => PatchFacts().GetProperty("label").GetString()!.Split(' ')[0];
     private static long StockSwfSize() => PatchFacts().GetProperty("airSwf").GetProperty("size").GetInt64();
+    /// <summary>Batch 828: a line's home install name and marker (patch.json "home"; FolderMove.HostName and InstallMarker in the code).</summary>
+    private static (string Name, string Marker) Home(JsonElement facts) =>
+        (facts.GetProperty("home").GetProperty("name").GetString()!, facts.GetProperty("home").GetProperty("marker").GetString()!);
+    private static (string Name, string Marker) OwnHome() => Home(PatchFacts());
+    /// <summary>The other patch line's (its patch.json beside this line's folder).</summary>
+    private static (string Name, string Marker) OtherHome() => Home(JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(WorkspaceFiles.PatchFolder)!,
+        WorkspaceFiles.Patch == "132" ? "126" : "132", "patch.json"))).RootElement);
 
     [Check("server.start-here-dry-run", TimeoutSeconds = 180)]
     public static void DryRunPrintsThePlanAndRunsNothing()
@@ -77,7 +84,7 @@ public static class StartHereChecks
                 $"Game folder (patch {PatchVersion()}, with DATA and LEVELS): None found. Choose it yourself.",
                 "Press Enter to choose it in a window, or paste its path: ", "Looking inside that folder (at most 60 seconds).",
                 $"Your game folder: {game}", $"Your AIR client folder: {air}",
-                $"Where should Amberline be installed? It keeps everything in that folder. Type a folder, or press Enter for C:\\Amberline: {installFolder}",
+                $"Where should Amberline be installed? It keeps everything in that folder. Type a folder, or press Enter for C:\\{OwnHome().Name}: {installFolder}",
                 $"Install folder: {installFolder}", $"Amberline copies these into the install folder: {game} {air}", " has ", " GB free.",
                 "Delete the originals? Type Y for yes or N for no. Y",
                 $"--install-to \"{installFolder}\" --game \"{game}\" --air \"{air}\" --delete-originals",
@@ -89,6 +96,9 @@ public static class StartHereChecks
             foreach (var gone in new[] { "Git:", "needs Git,", "LLVM", "Build Tools" })
                 TestAssert.False(home.Output.Contains(gone, StringComparison.Ordinal), $"the guide still mentions {gone}:\n{home.Output}");
             TestAssert.True(Regex.IsMatch(home.Output, @"-Version '0\.0\.\d+'"), "home plan lacks the source-build version 0.0.N:\n" + home.Output);
+            // Batch 829: it unpacks the zip build-server.ps1 names for this line (the home name with hyphens: Amberline-132-0.0.N on 132).
+            TestAssert.True(Regex.IsMatch(Flat(home.Output), $@"would unpack \S*\\{Regex.Escape(OwnHome().Name.Replace(' ', '-'))}-0\.0\.\d+-win-x64\.zip into "),
+                "home plan does not unpack the line's zip:\n" + home.Output);
             TestAssert.False(home.Output.Contains("-PublicHost", StringComparison.Ordinal), "a home build takes no -PublicHost:\n" + home.Output);
             TestAssert.False(home.Output.Contains("winget install --id Microsoft.DotNet", StringComparison.Ordinal), "a found tool is not offered:\n" + home.Output);
             using (var saved = JsonDocument.Parse(File.ReadAllText(Path.Combine(state, "answers.json"))))
@@ -123,7 +133,7 @@ public static class StartHereChecks
                 "-Runtime 'linux-x64'", "-PublicHost 'amberline.example.test'", "-ServerName 'Friends Server'", "chmod +x",
                 "Type the address: amberline.example.test", "Type a server name, or press Enter for Amberline: Friends Server",
                 "Which system does your server run? 1. Windows 2. Linux Type 1 or 2: 2",
-                "Step 3 of 6: Where the server package goes", @"Where should the server package go? Type a folder, or press Enter for C:\Amberline\server-package",
+                "Step 3 of 6: Where the server package goes", $@"Where should the server package go? Type a folder, or press Enter for C:\{OwnHome().Name}\server-package",
                 "Nothing is copied or deleted on this PC.", $"-Output '{package}'",
                 $"Step 6 of 6: Putting it on your server Do these in order: 1. Copy this folder to your server: {package}",
                 "2. Copy your game and AIR client folders to the server too.", "3. On the server, edit", "4. In your hosting company's firewall", "5. On the server",
@@ -151,11 +161,11 @@ public static class StartHereChecks
             // settings name, and the update brings no folder in (before: the folders step 2 asked, passed as --game and --air).
             var existing = Path.Combine(root, "existing install");
             Directory.CreateDirectory(Path.Combine(existing, "data"));
-            File.WriteAllText(Path.Combine(existing, "amberline-install.json"), "{}");
+            File.WriteAllText(Path.Combine(existing, OwnHome().Marker), "{}");
             File.WriteAllText(Path.Combine(existing, "data", "platform.json"), JsonSerializer.Serialize(new { dataRoot = game, airRoot = air }));
             var pointerProfile = Path.Combine(root, "profile-with-install");
-            Directory.CreateDirectory(Path.Combine(pointerProfile, "Amberline"));
-            File.WriteAllText(Path.Combine(pointerProfile, "Amberline", "install.json"), JsonSerializer.Serialize(new { folder = existing }));
+            Directory.CreateDirectory(Path.Combine(pointerProfile, OwnHome().Name));
+            File.WriteAllText(Path.Combine(pointerProfile, OwnHome().Name, "install.json"), JsonSerializer.Serialize(new { folder = existing }));
             var update = Run(windowsPowerShell, guide, state, standIns, root, "update", new
             {
                 useSaved = "N", where = "1", gameRoot = game, airRoot = air, updateInstall = "Y", deleteOriginals = "N", missing = Array.Empty<string>(),
@@ -401,12 +411,12 @@ public static class StartHereChecks
             var ownGame = Path.Combine(existing, "game", "projects", "lol_game_client", "releases", "0.0.0.51");
             var ownAir = Path.Combine(existing, "air");
             foreach (var folder in new[] { ownGame, ownAir, Path.Combine(existing, "app") }) Directory.CreateDirectory(folder);
-            File.WriteAllText(Path.Combine(existing, "amberline-install.json"), "{}");
+            File.WriteAllText(Path.Combine(existing, OwnHome().Marker), "{}");
             var build = Path.Combine(existing, "app", "BUILD.json");
             File.WriteAllText(build, """{"version": "0.0.1"}""");
             var profile = Path.Combine(root, "profile-with-install");
-            Directory.CreateDirectory(Path.Combine(profile, "Amberline"));
-            File.WriteAllText(Path.Combine(profile, "Amberline", "install.json"), JsonSerializer.Serialize(new { folder = existing }));
+            Directory.CreateDirectory(Path.Combine(profile, OwnHome().Name));
+            File.WriteAllText(Path.Combine(profile, OwnHome().Name, "install.json"), JsonSerializer.Serialize(new { folder = existing }));
 
             var own = Run(windowsPowerShell, guide, Path.Combine(root, "state-own"), standIns, root, "own",
                 new { where = "1", gameRoot = release, airRoot = air, updateInstall = "Y", missing = none }, ["-SearchRoots", empty], localAppData: profile);
@@ -501,6 +511,10 @@ public static class StartHereChecks
             Directory.CreateDirectory(air);
             using (var swf = File.Create(Path.Combine(air, "LolClient.swf"))) swf.SetLength(StockSwfSize());
             File.WriteAllText(Path.Combine(air, "LolClient.exe"), "client");
+            // Batch 828: the line's AIR modules (FolderMove.AirEntries; 1.52 adds mod_champ, mod_rep and mod_rt) are the AIR client's own, which the
+            // install copies, so the guide must not list them as staying behind.
+            foreach (var module in Amberline.AirCompanion.FolderMove.AirEntries.Where(entry => entry.EndsWith(".dat", StringComparison.OrdinalIgnoreCase)))
+                File.WriteAllText(Path.Combine(air, module), "module");
             var installFolder = Path.Combine(root, "Amberline home");
 
             // This PC, Windows PowerShell 5.1: the repository's steps 1 to 3 and 6, word for word, and one line for 4 and 5.
@@ -512,14 +526,15 @@ public static class StartHereChecks
                 "Searching this PC for them. This takes at most 60 seconds. Press S to skip.", $"1. {release} (patch {PatchVersion()}, correct)",
                 $"1. {air} (patch {PatchVersion()}, correct)", $"Your game folder: {release}", $"Your AIR client folder: {air}",
                 "Step 3 of 6: Where Amberline goes",
-                $"Where should Amberline be installed? It keeps everything in that folder. Type a folder, or press Enter for C:\\Amberline: {installFolder}",
+                $"Where should Amberline be installed? It keeps everything in that folder. Type a folder, or press Enter for C:\\{OwnHome().Name}: {installFolder}",
                 $"Amberline copies these into the install folder: {release} {air}", "Delete the originals? Type Y for yes or N for no. Y",
                 "Steps 4 and 5 of 6: not needed. This download is Amberline 1.4.0, built already.", "Step 6 of 6: Installing and starting Amberline",
                 $"DRY RUN: would start {starter} --install-to \"{installFolder}\" --game \"{release}\" --air \"{air}\" --delete-originals in a new window.",
                 $"Summary Install folder: {installFolder} Now: a new window named Amberline copies the program, the game and the AIR client into that folder.",
                 "On that page: set up your server, then choose Users and Add a user.",
                 "To update: choose Update now on its page, or unzip the newest release and double-click its START-HERE.cmd.", "DRY RUN finished");
-            foreach (var gone in new[] { "Step 4 of 6", "Step 5 of 6", "Build tools", "would build", "would install it with", "unpack", "-Layout" })
+            foreach (var gone in new[] { "Step 4 of 6", "Step 5 of 6", "Build tools", "would build", "would install it with", "unpack", "-Layout",
+                         "These stay in the AIR client folder" })
                 TestAssert.False(home.Output.Contains(gone, StringComparison.Ordinal), $"the zip's run shows <{gone}>:\n{home.Output}");
             AssertPlain(home.Output, root);
 
@@ -552,11 +567,11 @@ public static class StartHereChecks
             // An install of 1.3.0 the pointer names: the zip's 1.4.0 is offered as the update; an install of 1.4.0 ends after step 1.
             var existing = Path.Combine(root, "existing");
             Directory.CreateDirectory(Path.Combine(existing, "app"));
-            File.WriteAllText(Path.Combine(existing, "amberline-install.json"), "{}");
+            File.WriteAllText(Path.Combine(existing, OwnHome().Marker), "{}");
             File.WriteAllText(Path.Combine(existing, "app", "BUILD.json"), """{"version": "1.3.0"}""");
             var profile = Path.Combine(root, "profile-with-install");
-            Directory.CreateDirectory(Path.Combine(profile, "Amberline"));
-            File.WriteAllText(Path.Combine(profile, "Amberline", "install.json"), JsonSerializer.Serialize(new { folder = existing }));
+            Directory.CreateDirectory(Path.Combine(profile, OwnHome().Name));
+            File.WriteAllText(Path.Combine(profile, OwnHome().Name, "install.json"), JsonSerializer.Serialize(new { folder = existing }));
             var update = Run(windowsPowerShell, guide, Path.Combine(root, "state-update"), standIns, root, "zip-update",
                 new { where = "1", gameRoot = release, airRoot = air, updateInstall = "Y", deleteOriginals = "N" }, ["-SearchRoots", Path.Combine(root, "stand-ins")],
                 localAppData: profile);
@@ -591,6 +606,33 @@ public static class StartHereChecks
             TestAssert.Equal(0, newer.ExitCode, newer.Output);
             AssertHas(newer.Output, "a newer install", $"Nothing was changed. Your Amberline 1.5.0, in {existing}, is not older than this download's build 1.4.0.");
             TestAssert.False(newer.Output.Contains("would start", StringComparison.Ordinal), "a newer install starts nothing:\n" + newer.Output);
+            // Batch 828: an install of the other patch line (its own pointer folder and marker), newer than this zip and also from before batch 637,
+            // is another program: this line's guide neither offers it an update nor stops at its version; it installs this line beside it, and
+            // refuses the other line's install folder as one that holds other files.
+            var other = OtherHome();
+            var otherInstall = Path.Combine(root, "other line");
+            Directory.CreateDirectory(Path.Combine(otherInstall, "app"));
+            File.WriteAllText(Path.Combine(otherInstall, other.Marker), "{}");
+            File.WriteAllText(Path.Combine(otherInstall, "app", "BUILD.json"), JsonSerializer.Serialize(new { version = "9.9.9" }));
+            var otherProfile = Path.Combine(root, "profile-other-line");
+            Directory.CreateDirectory(Path.Combine(otherProfile, other.Name, "app"));
+            File.WriteAllText(Path.Combine(otherProfile, other.Name, "install.json"), JsonSerializer.Serialize(new { folder = otherInstall }));
+            File.WriteAllText(Path.Combine(otherProfile, other.Name, "app", "BUILD.json"), JsonSerializer.Serialize(new { version = "9.9.9" }));
+            var beside = Run(windowsPowerShell, guide, Path.Combine(root, "state-other-line"), standIns, root, "zip-other-line",
+                new { where = "1", gameRoot = release, airRoot = air, installFolder, deleteOriginals = "N" }, ["-SearchRoots", Path.Combine(root, "stand-ins")],
+                localAppData: otherProfile);
+            TestAssert.Equal(0, beside.ExitCode, beside.Output);
+            AssertHas(beside.Output, "the other line's install", "Step 1 of 6: Where will your server run?", "Step 3 of 6: Where Amberline goes",
+                $"Type a folder, or press Enter for C:\\{OwnHome().Name}: {installFolder}",
+                $"DRY RUN: would start {starter} --install-to \"{installFolder}\" --game \"{release}\" --air \"{air}\" in a new window.");
+            foreach (var gone in new[] { "9.9.9", "Update this Amberline now", "Nothing was changed", "This PC has Amberline already", otherInstall })
+                TestAssert.False(beside.Output.Contains(gone, StringComparison.Ordinal), $"the other line's install shows <{gone}>:\n{beside.Output}");
+            var into = Run(windowsPowerShell, guide, Path.Combine(root, "state-into-other-line"), standIns, root, "zip-into-other-line",
+                new { where = "1", gameRoot = release, airRoot = air, installFolder = otherInstall }, ["-SearchRoots", Path.Combine(root, "stand-ins")],
+                localAppData: otherProfile);
+            TestAssert.Equal(1, into.ExitCode, into.Output);
+            AssertHas(into.Output, "the other line's install folder", "Problem: That folder holds other files. Choose a new or empty folder.");
+            TestAssert.False(into.Output.Contains("would start", StringComparison.Ordinal), "the other line's folder starts nothing:\n" + into.Output);
             TestAssert.False(File.Exists(Path.Combine(standIns, "called.txt")), "a dry run called a tool");
 
             // The guide's own start of Start Amberline.cmd says it comes from the guide, so the .cmd installs instead of opening the guide again.
