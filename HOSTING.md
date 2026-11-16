@@ -50,7 +50,8 @@ replaces that build when you start it.
 
 ## START-HERE.cmd, step by step
 
-Unzip the release zip or the code download (**Code**, then **Download ZIP**) and double-click `START-HERE.cmd`. In the release
+Unzip the release zip or the code download (**Code**, then **Download ZIP**) and double-click `START-HERE.cmd` (in the code
+download, the one in its `126` folder). In the release
 zip, a double-click on `Start Amberline.cmd` opens it too. A window named **Amberline setup** asks one question at a time: type each answer, then press Enter. A yes or no always says **Type Y for yes or N for no.**
 To stop, close the window.
 
@@ -118,7 +119,7 @@ The guide ends with a **Summary**: the install folder, what happens now, the set
 `.artifacts\start-here` in the download; your PC's and Windows account's names are written as `<hidden>`). The window then says
 **Press Enter to close.** To update later: choose **Update now** on Amberline's page (see [Updates](#updates)), or unzip
 the newest release and double-click its `START-HERE.cmd`. With the code: download the newest code and double-click
-`START-HERE.cmd` again.
+`126\START-HERE.cmd` again.
 
 ## The release zip
 
@@ -587,7 +588,7 @@ depend on your PC or your router.
 
 ### With START-HERE.cmd
 
-Run the code download's `START-HERE.cmd` on your own PC and type `2` at step 1 (the release zip builds no server package).
+Run the code download's `126\START-HERE.cmd` on your own PC and type `2` at step 1 (the release zip builds no server package).
 It asks:
 
 - **Type the address**: a name or a number address with dots, as your hosting company shows it, without `https://` and without
@@ -626,7 +627,7 @@ folder again keeps its certificate, so the `Play.cmd` files you gave out keep wo
 Install the [developer requirements](README.md#for-developers) on a PC, then build the package with your server's address:
 
 ```powershell
-pwsh -NoProfile -File ./tools/build-server.ps1 -GameRoot <game release folder> -AirRoot <AIR client folder> -Runtime win-x64 -PublicHost <your server's address>
+pwsh -NoProfile -File ./host/tools/build-server.ps1 -Patch 126 -GameRoot <game release folder> -AirRoot <AIR client folder> -Runtime win-x64 -PublicHost <your server's address>
 ```
 
 - `-Runtime linux-x64` builds for a Linux server.

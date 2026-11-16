@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Amberline.Tools</AssemblyName>
+    <RootNamespace>Amberline.Tools</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Batch 809: the files both patch lines share are in host/. -->
+    <Compile Include="$(HostRoot)src\Amberline.Tools\**\*.cs" LinkBase="host" />
+    <ProjectReference Include="..\Amberline\Amberline.csproj" />
+    <!-- Test tooling only: the scenario director hosts the production server loop (ServerRuntimeHost). The server never
+         references the tools. -->
+    <ProjectReference Include="..\Amberline.Server\Amberline.Server.csproj" />
+  </ItemGroup>
+</Project>

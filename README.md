@@ -51,11 +51,23 @@ your players only if you turn that on in Settings.
 
 ### Build it yourself instead
 
-Download this repository (**Code**, then **Download ZIP**), unzip it and double-click **`START-HERE.cmd`**. It is the release
+Download this repository (**Code**, then **Download ZIP**), unzip it, open its `126` folder and double-click **`START-HERE.cmd`**. It is the release
 zip's guide, with two more steps: it asks where the server runs (this PC or a rented server), finds your game folders, installs
 any missing build tool after a yes, builds Amberline (several minutes) and installs it. [HOSTING.md](HOSTING.md#start-herecmd-step-by-step) walks through each step.
 
 ### For developers
+
+The repository holds two patch lines side by side:
+
+| Folder | What it is |
+|---|---|
+| `126/` | patch 1.0.0.126 (October 2011), the line the releases are built from |
+| `132/` | patch 1.0.0.132 (January 2012), in progress and not released yet |
+| `host/` | every file both lines share, with the same text in both |
+
+A line's folder holds its own projects (`<line>/Amberline.slnx`), the files that differ between the lines and its natives; each
+project also compiles the same folder under `host/` (`HostRoot` in the root `Directory.Build.props`). A file is in `host/` or in a
+line folder, never in both. Inside each of them:
 
 | Path | What it is |
 |---|---|
@@ -66,22 +78,23 @@ any missing build tool after a yes, builds Amberline (several minutes) and insta
 | `src/Amberline.Rtmp` | the RTMP/AMF library (vendored rtmp-sharp; see `NOTICE`) |
 | `src/Amberline.AirCompanion` | the player tool |
 | `src/Amberline.Tools` | a headless bot match and audits of your own game data |
-| `native/enet` | ENet (modified) and the bridge the server loads |
-| `native/exehost` | the x86 helper that runs unit movement from the player's own game executable |
+| `native/enet` | ENet (modified) and the bridge the server loads (in each line folder) |
+| `native/exehost` | the x86 helper that runs unit movement from the player's own game executable (in each line folder) |
 | `tests/Amberline.Tests` | the checks |
-| `START-HERE.cmd`, `tools/guide.ps1` | the setup guide, in the release zip too: where Amberline goes, tools, build and install, step by step |
-| `tools/` | `check.ps1` (build and checks), `build-server.ps1` (the deployable server and the release zip), `package-remote.ps1` (its server stage) and `player-file.ps1` with `play-bootstrap.cmd` (the players' `Play.cmd`) |
+| `START-HERE.cmd`, `patch.json` | the line's setup guide start and its facts (in each line folder); the guide itself is `host/tools/guide.ps1` (the release zip has it in `tools/`) |
+| `tools/` | `check.ps1` (build and checks, in each line folder); in `host/tools`: `build-server.ps1` (the deployable server and the release zip, `-Patch 126` or `-Patch 132`), `package-remote.ps1` (its server stage) and `player-file.ps1` with `play-bootstrap.cmd` (the players' `Play.cmd`) |
 
 **Requirements:** the .NET SDK named in `global.json`, PowerShell 7.5 or later and Zig (it builds the two native parts for Windows
 and Linux; the build scripts find it as `ZIG`, on `PATH` or in `.tools/zig`). Git is optional: a git checkout records its commit
 in `BUILD.json`. You also need your own game folder on patch 1.0.0.126 (`DATA`, `LEVELS`) and AIR client folder.
 
 ```powershell
-pwsh ./tools/check.ps1                                      # no game files: the data-free checks pass, the others fail
-pwsh ./tools/check.ps1 -GameDataRoot <your release folder> -AirClientRoot <your AIR client folder>   # every check
+pwsh ./126/tools/check.ps1                                  # no game files: the data-free checks pass, the others fail
+pwsh ./126/tools/check.ps1 -GameDataRoot <your release folder> -AirClientRoot <your AIR client folder>   # every check
 ```
 
-`check.ps1` builds into a new folder under `.artifacts/` and runs the checks there; `-Scope` and `-Check` select a subset. To
+`check.ps1` builds its line into a new folder under the line's `.artifacts/` and runs the checks there; `-Scope` and `-Check`
+select a subset. The 132 line is checked the same way with `./132/tools/check.ps1` and its own 1.0.0.132 folders. To
 build a rented server's package by hand, see [A rented server](HOSTING.md#a-rented-server).
 
 ### Contributing and licence

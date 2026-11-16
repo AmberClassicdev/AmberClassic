@@ -1,0 +1,74 @@
+using Amberline.AirCompanion.Rads;
+
+namespace Amberline.AirCompanion;
+
+/// <summary>
+/// Gives the picked game folder the stock client's managed file layout (RADS manifest + RAF archives), built on this PC from this PC's own game
+/// files. Nothing is shipped: the same promise as <see cref="GameLanguagePack"/>. It exists because the first buff tooltip of a game builds the
+/// client's buff database from 780 loose files (about 5 s on a cold disk) and the managed layout serves them from one archive (about 0.2 s); see
+/// docs/maintenance/2026-10-18-w15-rads-delivery.md.
+/// The work runs on a background thread so it never delays AIR or the game; a game that starts before the layout is complete simply runs
+/// on its own files, exactly as before (the layout becomes visible only when its manifest is moved into place last). A folder that does not
+/// read like <c>projects/&lt;name&gt;/releases/&lt;version&gt;</c> stays unmanaged: the client decides managed or unmanaged from its working
+/// directory, and staging a second copy of the game under a RADS-shaped path would be a launcher change, not a file step.
+/// Whether the start builds it is the release line's (<see cref="CompanionLine.PrepareLayout"/>, batch 795): the 1.0.0.132 line does not, as
+/// rads.dll never reads a layout under that line's root. The classic start uses the launcher's own root, <see cref="RadsRegistry.Root"/> (batch 814).
+/// </summary>
+internal static class GameManagedLayout
+{
+    internal const string NoShortNamesWarning = "managed-layout: WARNING this volume has no 8.3 short names and no managed layout is active: the stock client cannot build its spell index from loose files and stops at hero creation (\"Avatar spell not found!\"). Keep the game in a folder like projects/lol_game_client/releases/<version> (the layout is then built on any drive) or on the system drive.";
+
+    /// <summary>Set to 0 to turn the whole step off (support switch: the game then runs exactly as it did before this existed).</summary>
+    internal const string OffVariable = "AMBERLINE_MANAGED_LAYOUT";
+
+    /// <summary>Names this line's RADS root for the whole process; a stage's <c>radsRoot</c> sets it (<see cref="Program.RunDesktopAsync"/>).</summary>
+    internal const string RootVariable = CompanionLine.RadsRootVariable;
+
+    /// <summary>
+    /// The RADS root this line builds under (the managed layout, the classic start): the line's rule, <see cref="CompanionLine.RadsRoot"/>
+    /// (<paramref name="configured"/> is the test seam). Null when nothing is to be built.
+    /// </summary>
+    internal static string? ResolveRoot(Func<string?>? configured = null) => CompanionLine.RadsRoot(configured);
+
+    /// <summary>The options of a build that runs beside a starting game: a quarter of the cores and small batches, so memory and disk stay light.</summary>
+    internal static ManagedLayout.EnsureOptions BackgroundOptions() =>
+        new(Parallelism: Math.Max(1, Environment.ProcessorCount / 4), BatchMegabytes: 32);
+
+    /// <summary>
+    /// Starts the check (and, when needed, the build) for <paramref name="gameDirectory"/> and returns at once. The task result is the log line, which
+    /// <paramref name="write"/> receives as well; it holds no path. The task never faults.
+    /// </summary>
+    internal static Task<string> Start(string gameDirectory, Action<string> write, string? root = null, ManagedLayout.EnsureOptions? options = null, bool? gameRunning = null, Func<string>? shortNames = null)
+    {
+        if (Environment.GetEnvironmentVariable(OffVariable) == "0")
+        {
+            const string off = $"managed-layout: off ({OffVariable}=0)";
+            write(off);
+            return Task.FromResult(off);
+        }
+        root ??= ResolveRoot();
+        if (root is null)
+        {
+            const string relative = "managed-layout: unmanaged (the configured RADS root is not a full path, or is the 1.0.0.126 line's c:\\rads)";
+            write(relative);
+            return Task.FromResult(relative);
+        }
+        // A game from an earlier session can outlive its companion and have the archives open: then a stale layout is only taken out of use.
+        var running = gameRunning ?? System.Diagnostics.Process.GetProcessesByName("League of Legends").Length > 0;
+        return Task.Factory.StartNew(() =>
+        {
+            Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
+            string line;
+            ManagedLayout.Result? result = null;
+            try { result = ManagedLayout.Ensure(gameDirectory, root, (options ?? BackgroundOptions()) with { GameRunning = running }); line = result.ToString(); }
+            // A background step on someone else's machine must never take the companion down; Ensure already reports I/O problems as results.
+            catch (Exception exception) { line = $"managed-layout: failed ({exception.GetType().Name})"; }
+            write(line);
+            // Without an active layout the client runs on its loose files, which need 8.3 short names (see GameFolderReport.ShortNames): say so in the log,
+            // where a friend whose game stops at hero creation will paste it.
+            if (result?.Outcome is not (ManagedLayout.Outcome.Built or ManagedLayout.Outcome.Current) && (shortNames ?? (() => GameFolderReport.ShortNames(gameDirectory)))() == "off")
+                write(NoShortNamesWarning);
+            return line;
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    }
+}

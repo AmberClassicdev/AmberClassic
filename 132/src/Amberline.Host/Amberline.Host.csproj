@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <!-- Batch 825: the Host executable (its HTTPS /api/v1 listener, guest invitations and host.json) is retired; the Platform uses this library. -->
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Batch 797: the files both patch lines share are in host/. -->
+    <Compile Include="$(HostRoot)src\Amberline.Host\**\*.cs" LinkBase="host" />
+    <ProjectReference Include="../Amberline.Server/Amberline.Server.csproj" />
+  </ItemGroup>
+</Project>

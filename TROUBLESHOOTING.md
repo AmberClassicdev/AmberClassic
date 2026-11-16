@@ -247,7 +247,7 @@ called UPnP. These can stop that:
   **Update now** on its page, or unzip the newest release zip and double-click its `START-HERE.cmd`.
 - **Nothing was changed. This download installs Amberline on the PC you start it on.** You typed `2` (a rented server) in the
   release zip's guide. Unzip the zip on a Windows server and type `1` there, or build a Linux server's package with the code
-  download's `START-HERE.cmd`.
+  download's `126\START-HERE.cmd`.
 - **Nothing was changed.** (after step 3) You answered `N` to **Update this Amberline now?**. To install Amberline
   in another folder instead, uninstall it first (`Uninstall Amberline.cmd` in its folder), then double-click `START-HERE.cmd`
   again.

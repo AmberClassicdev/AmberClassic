@@ -1,0 +1,28 @@
+namespace Amberline.Platform;
+
+/// <summary>
+/// NOT RETAIL: the Platform's own block on the 1.0.0.132 line (batch 810): the ports of <c>132/patch.json</c> "ports" (HTTP 8490, public
+/// HTTPS 8491, RTMP 2199, chat 5222, game UDP 5319 to 5322) and the patch name the host's pages print. The defaults of
+/// <see cref="PlatformSettings"/> and the host code read these. The 1.0.0.126 line keeps its own copy at this path (8390, 8391, 2099,
+/// 5222, 5219). The friends' companion has its own block (<c>132/src/Amberline.AirCompanion/CompanionLine.cs</c>), which the Platform
+/// does not compile.
+/// </summary>
+public static class PlatformLine
+{
+    public const int HttpPort = 8490;
+    public const int RemotePort = 8491;
+    public const int RtmpPort = 2199;
+    public const int XmppPort = 5222;   // the 1.52 client's main chat connection always uses 5222 (see ChatPort in CompanionLine.cs)
+    public const int FirstGamePort = 5319;
+
+    /// <summary>The name the host's pages give the friends' AIR client and game (126 says "patch-126").</summary>
+    public const string PatchName = "patch-132";
+
+    /// <summary>
+    /// Batch 816: what the host's update check (<see cref="HostUpdates"/>) asks GitHub, and the tag prefix of this line's releases. 132
+    /// releases are tagged p132-v0.1.x and are never the project's latest release (that is the 126 line's, owner, 16 November 2026), so
+    /// the check lists the releases (one page of 100, newest first) and takes the highest p132-v tag that is not a draft.
+    /// </summary>
+    public const string ReleaseQuery = "https://api.github.com/repos/Amberline-Dev/Project-Amberline/releases?per_page=100";
+    public const string ReleaseTagPrefix = "p132-v";
+}

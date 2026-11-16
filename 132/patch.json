@@ -1,0 +1,8 @@
+{
+  "label": "1.0.0.132 (January 2012)",
+  "clientZip": "patch-1.0.0.132-client-bundle.zip",
+  "releaseTagPrefix": "p132-v",
+  "gameFolder": "the 1.0.0.132 game folder",
+  "airSwf": { "name": "LolClient.swf", "size": 7009444 },
+  "ports": { "web": 8490, "remote": 8491, "rtmp": 2199, "chat": 5222, "gameFirst": 5319, "gameLast": 5322 }
+}

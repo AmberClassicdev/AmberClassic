@@ -4,6 +4,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Batch 797: the code both patch lines share. A patch's project compiles its own folder and the same folder under host/
+         ($(HostRoot)src/<project>/), so a file lives in one of the two places only. -->
+    <HostRoot>$(MSBuildThisFileDirectory)host\</HostRoot>
   </PropertyGroup>
   <!-- Release binaries and PDBs (including the companion sent to friends) must not embed the
        builder's absolute checkout path; sources and in-repo obj paths become /_/... -->

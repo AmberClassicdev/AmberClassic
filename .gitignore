@@ -3,8 +3,8 @@
 **/obj/
 artifacts/
 .artifacts/
-native/enet/build/
-native/exehost/build/
+**/native/enet/build/
+**/native/exehost/build/
 .tools/
 .vs/
 *.user
@@ -33,9 +33,15 @@ native/exehost/build/
 *.pcapng
 *.dmp
 /DATA/
+/*/DATA/
 /LEVELS/
+/*/LEVELS/
 /captures/
+/*/captures/
 /platform-data/
+/*/platform-data/
 /logs/
-tests/*/Fixtures/*
-!tests/*/Fixtures/blowfish.json
+/*/logs/
+# The checks are in each line folder (126/, 132/) and in host/.
+/*/tests/*/Fixtures/*
+!/*/tests/*/Fixtures/blowfish.json

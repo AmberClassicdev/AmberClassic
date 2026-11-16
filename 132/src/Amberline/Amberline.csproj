@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Amberline</AssemblyName>
+    <RootNamespace>Amberline</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Batch 809: the files both patch lines share are in host/. -->
+    <Compile Include="$(HostRoot)src\Amberline\**\*.cs" LinkBase="host" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+  </ItemGroup>
+</Project>

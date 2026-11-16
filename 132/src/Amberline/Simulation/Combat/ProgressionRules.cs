@@ -1,0 +1,189 @@
+namespace Amberline.Simulation.Combat;
+
+/// <summary>
+/// Patch 1.0.0.126 progression constants recovered from the shipped native
+/// client and its Map1 DeathTimes data.
+/// </summary>
+public static class ProgressionRules
+{
+    public const double HeroBaseBounty = 300.0;
+    public const double KillStreakBonus = 0.10;
+    public const int MinKillsForStreak = 2;
+    // These three values are Float32 entries in bounty.inibin. Keep their
+    // promoted values so the x87 bounty path sees the same constants as the
+    // native client rather than rounded source literals.
+    public const double MaxKillStreakBonus = 1.6670000553131104;
+    public const double DeathStreakPenalty = 0.20999999344348907;
+    public const int MinDeathsForStreak = 2;
+    public const double MinDeathStreakPenalty = 0.05000000074505806;
+    public const double FirstBloodBonus = 100.0;
+    public const double GoldPoolForAssist = 0.5834;
+    // The pool the 1.0.0.132 Mission.inibin shares split (2 x 0.58, 4 x 0.29, 5 x 0.232; 126: 1.10), for more than five recipients.
+    public const double SharedUnitExperiencePool = 1.16;
+    // V1.0.0.104: "Solo minion kill experience reduced to 92%". Applies to a
+    // single lane-unit recipient only; shared kills keep the pool split (116% in 132) and
+    // neutral monsters keep their full solo reward.
+    public const double SoloLaneUnitExperience = 0.92;
+    // Patch notes (League wiki, Experience (champion) history and the V1.0.0.x pages): V1.0.0.96 "Base champion kill experience
+    // reduced to 55% from 60% of level up experience"; V1.0.0.120 (22 June 2011) "Experience granted for kills is now determined by
+    // the dying champion's level". The level delta scales it per recipient (batch 688, ChampionKillLevelDeltaFactor): V1.0.0.75
+    // (24 February 2010) reworked kill experience "on a per-champion basis, with the rewards scaling based on the delta of champion
+    // levels" on an S curve; V1.0.0.79 states its base as "Equal level champion kills now provide 50% of the XP needed to level", and
+    // V1.0.0.120's "Killing champions higher level than you will now grant more experience ... lower level ... less ... equal level
+    // champions is unaffected" holds only with the curve still in place (without it a kill three levels up would drop from almost
+    // twice to the ratio of two level increments). V1.0.0.138 (18 April 2012) replaced the curve with 8% per level of difference.
+    // Batch 552 read V1.0.0.138 as the first modifier and paid every recipient the bare share. No shipped key holds a champion XP
+    // value (ExpCurve, Mission, bounty.inibin, Constants.var, the champion records' ExpGivenOnDeath) and the client's award path is a
+    // stub. V1.0.0.113 (General, Experience): "When more than 1 champion is sharing experience, 10% extra experience is split among
+    // all targets"; the wiki's Experience history files that line under minion kills, the patch note itself names no unit type.
+    public const double ChampionKillExperienceFraction = 0.55;
+    public const double SharedChampionExperiencePool = 1.10;
+
+    /// <summary>
+    /// The V1.0.0.75 S curve on the level delta <c>d = victimLevel - recipientLevel</c>, a multiplier of the recipient's share:
+    /// "killing champions three levels and below provide negligible rewards, and kills three levels and above provide almost twice
+    /// the experience of even level kills". Reconstruction: the curve's formula is not in the shipped files or the notes; this is the
+    /// logistic from 0 to 2 through 1 at an even level whose two anchors are the note's words, 5% at three levels below and 195% at
+    /// three above: <c>2 / (1 + 39^(-d/3))</c> (1.54 one level up, 0.46 one level down).
+    /// </summary>
+    public static double ChampionKillLevelDeltaFactor(int victimLevel, int recipientLevel) =>
+        2.0 / (1.0 + Math.Pow(39.0, -(victimLevel - recipientLevel) / 3.0));
+
+    // Map1/DeathTimes.inibin, TimeDeadPerLevel*Level01..Level18.
+    private static readonly double[] DeathTimesByLevel =
+        [12, 14, 16, 19, 22, 25, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50];
+
+    public const double DeathTimeScalingStart = 1500.0;
+    public const double DeathTimeScalingIncrement = 60.0;
+    public const double DeathTimeScalingIncrease = 0.019999999552965164;
+    public const double DeathTimeScalingCap = 1.5;
+
+    /// <summary>
+    /// The bounty.inibin values HeroBounty reads. SummonersRiftBounty holds the [Global] values the constants above name.
+    /// MapProgressionRules reads the [ODIN] section for The Crystal Scar (map 8, batch 498).
+    /// </summary>
+    public readonly record struct BountyValues(double BaseGold, double FirstBloodBonus, double KillStreakBonus,
+        double MaxKillStreakBonus, int MinKillsForStreak, double DeathStreakPenalty, int MinDeathsForStreak,
+        double MinDeathStreakPenalty);
+
+    public static readonly BountyValues SummonersRiftBounty = new(HeroBaseBounty, FirstBloodBonus, KillStreakBonus,
+        MaxKillStreakBonus, MinKillsForStreak, DeathStreakPenalty, MinDeathsForStreak, MinDeathStreakPenalty);
+
+    /// <summary>Computes the hero bounty with the Summoner's Rift values.</summary>
+    public static double HeroBounty(int victimKillStreak, int victimDeathStreak, bool firstBlood) =>
+        HeroBounty(SummonersRiftBounty, victimKillStreak, victimDeathStreak, firstBlood);
+
+    /// <summary>
+    /// Computes the hero bounty with the given bounty values. The native routine applies the streak
+    /// multiplier first and adds FirstBloodBonus afterwards.
+    /// </summary>
+    public static double HeroBounty(BountyValues bounty, int victimKillStreak, int victimDeathStreak, bool firstBlood)
+    {
+        var multiplier = 1.0;
+        if (victimKillStreak >= bounty.MinKillsForStreak)
+        {
+            multiplier = Math.Min(bounty.MaxKillStreakBonus,
+                Math.Pow(1.0 + bounty.KillStreakBonus,
+                    victimKillStreak - bounty.MinKillsForStreak + 1));
+        }
+        else if (victimDeathStreak + 1 >= bounty.MinDeathsForStreak)
+        {
+            // The exponent is (deathStreak + 1 + 0.4 - MinDeathsForStreak). The 0.4 is the native tuning constant,
+            // retained here instead of being rounded away.
+            multiplier = Math.Max(bounty.MinDeathStreakPenalty,
+                Math.Pow(1.0 - bounty.DeathStreakPenalty,
+                    victimDeathStreak + 1.4 - bounty.MinDeathsForStreak));
+        }
+
+        return bounty.BaseGold * multiplier + (firstBlood ? bounty.FirstBloodBonus : 0.0);
+    }
+
+    /// <summary>Returns the Map1 base death time for a champion level.</summary>
+    public static double BaseDeathTime(int level)
+    {
+        var index = Math.Clamp(level, 1, DeathTimesByLevel.Length) - 1;
+        return DeathTimesByLevel[index];
+    }
+
+    /// <summary>
+    /// Returns the native DeathTimerManager value at mission elapsed time.
+    /// Scaling begins strictly after StartTime and is floored per increment.
+    /// </summary>
+    public static double DeathTime(int level, double missionElapsedSeconds)
+    {
+        var baseTime = BaseDeathTime(level);
+        if (!double.IsFinite(missionElapsedSeconds) ||
+            missionElapsedSeconds <= DeathTimeScalingStart)
+            return baseTime;
+
+        var steps = Math.Floor((missionElapsedSeconds - DeathTimeScalingStart) /
+                               DeathTimeScalingIncrement);
+        var multiplier = Math.Min(DeathTimeScalingCap,
+            1.0 + steps * DeathTimeScalingIncrease);
+        return baseTime * multiplier;
+    }
+
+    // LEVELS/Map1/Mission.inibin, the five consecutive keys 0x286CC4F6..0x286CC4FA (float segment, the key names are server-only and
+    // unrecovered): 0.92, 0.58, 0.3867, 0.29, 0.232 in 1.0.0.132. They are the 92% solo rule and the 116% pool split over two, three, four
+    // and five recipients; the file writes the three-way share as 0.3867 where 1.16 / 3 is 0.38667. 1.0.0.126 shipped 0.55, 0.367, 0.275,
+    // 0.22, the 110% pool (A10 audit, 18 October 2026; batch 781 restated the table to the 132 file). Index = recipients - 1.
+    public static readonly double[] SharedUnitExperienceShares = [0.92, 0.58, 0.3867, 0.29, 0.232];
+
+    /// <summary>
+    /// Patch 1.0.0.113's shared-unit XP rule: one recipient receives the base
+    /// reward scaled by <paramref name="soloMultiplier"/> (lane units pass
+    /// SoloLaneUnitExperience); two to five eligible recipients each take the
+    /// Mission.inibin share (the 116% pool of 1.0.0.132 split evenly, three ways 0.3867).
+    /// </summary>
+    public static double SharedUnitExperience(double reward, int recipients,
+        double soloMultiplier = 1.0)
+    {
+        if (!double.IsFinite(reward) || reward < 0.0)
+            throw new ArgumentOutOfRangeException(nameof(reward));
+        if (recipients <= 0) return 0.0;
+        if (recipients == 1) return reward * soloMultiplier;
+        return reward * (recipients <= SharedUnitExperienceShares.Length
+            ? SharedUnitExperienceShares[recipients - 1]
+            : SharedUnitExperiencePool / recipients);
+    }
+
+    /// <summary>
+    /// Returns the champion-kill XP base for the victim's current level:
+    /// 55% of the victim's next-level requirement (V1.0.0.96, V1.0.0.120).
+    /// Reconstruction: a level-18 victim has no next level in ExpCurve; it keeps
+    /// the curve's +110 step past the last threshold.
+    /// </summary>
+    public static double ChampionKillExperienceBase(int victimLevel) =>
+        ExperienceToNextLevel(victimLevel) * ChampionKillExperienceFraction;
+
+    /// <summary>Returns the cumulative Map1 XP threshold for a champion level.</summary>
+    public static double ExperienceThreshold(int level) =>
+        LevelExperience[Math.Clamp(level, 1, 18) - 1];
+
+    /// <summary>Returns the XP increment from a level to its next level.</summary>
+    public static double ExperienceToNextLevel(int level)
+    {
+        var current = Math.Clamp(level, 1, 18);
+        return current < 18
+            ? ExperienceThreshold(current + 1) - ExperienceThreshold(current)
+            : (LevelExperience[^1] - LevelExperience[^2]) + 110.0;
+    }
+
+    /// <summary>
+    /// Splits a champion-kill XP pool over a snapshotted recipient set: one recipient takes the base, two or more split 110% evenly
+    /// (V1.0.0.113). Each recipient's share is then scaled by its own level delta (<see cref="ChampionKillLevelDeltaFactor"/>).
+    /// </summary>
+    public static double SharedChampionKillExperience(double baseExperience, int recipients)
+    {
+        if (!double.IsFinite(baseExperience) || baseExperience < 0.0)
+            throw new ArgumentOutOfRangeException(nameof(baseExperience));
+        if (recipients <= 0) return 0.0;
+        return baseExperience * (recipients == 1 ? 1.0 : SharedChampionExperiencePool) /
+            recipients;
+    }
+
+    private static readonly double[] LevelExperience =
+        // Cumulative Map1/ExpCurve.inibin thresholds for levels 1..18.
+        [0, 280, 670, 1170, 1780, 2500, 3330, 4270, 5320, 6480,
+         7750, 9130, 10620, 12220, 13930, 15750, 17680, 19720];
+}

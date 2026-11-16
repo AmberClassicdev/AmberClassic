@@ -1,0 +1,231 @@
+using System.Buffers.Binary;
+using System.Text.Json;
+using Amberline.Core;
+using Amberline.Network.Protocol;
+using Amberline.Network.Diagnostics;
+
+namespace Amberline.Tests;
+
+public static partial class ChampionLiveRegressionChecks
+{
+    /// <summary>Batch 690: 0xAC also carries the champion death event (id 2, CombatPackets.ChampionDie); a multi-kill is ids 7..11 in
+    /// 132 (126: 4..8; batch 780).</summary>
+    private static bool IsMultiKill(PlaintextPacket packet) => Opcode(packet) == 0xAC && packet.Plaintext.Span[5] is >= 7 and <= 11;
+
+    private static bool IsChampionDie(PlaintextPacket packet) =>
+        Opcode(packet) == 0xAC && packet.Plaintext.Span[5] == CombatPackets.ChampionDieEvent;
+
+    /// <summary>
+    /// Batch 690 (community report: the HUD's top-right kill counter stays at 0 vs 0): the counter and the
+    /// kill callout run only from the client's global listener of OnChampionDie (event 2), which no client code raises, so every champion
+    /// death sends it: 0xAB on the victim, then ParamsDie (the killer, the gold given, the assist count and the twelve assist slots). Every
+    /// view gets it after the death's 0x61. An execution names the victim as its killer, as the 0x61 does (the counter skips it).
+    /// </summary>
+    [Check("network.champion-die-event-counts-team-kills")]
+    public static void ChampionDeathSendsTheOnChampionDieEvent()
+    {
+        foreach (var team in new[] { Team.Order, Team.Chaos })
+        {
+            using var match = new Match("Annie", team, ally: true);
+            var runtime = match.Runtime; var hero = match.Hero(0); var enemy = match.Hero(1); var ally = match.Hero(2);
+            match.Clear();
+            runtime.Combat.ApplyHit(ally.NetId, enemy.NetId, 1.0, DamageType.True);
+            TestAssert.True(runtime.Combat.Kill(enemy, hero.NetId));
+            runtime.Combat.ScheduleRespawn(enemy);
+            runtime.Delivery.Flush();
+            TestAssert.Equal(1, ally.ChampionAssists, "the ally's hit is an assist");
+            foreach (var capture in match.Captures)
+            {
+                var events = capture.Packets.Where(IsChampionDie).ToArray();
+                TestAssert.Equal(1, events.Length, "one OnChampionDie per champion death");
+                var bytes = events[0].Plaintext.Span;
+                TestAssert.Equal(66, bytes.Length, "the 0xAB header, the event byte and the 60-byte ParamsDie");
+                TestAssert.Equal(enemy.NetId, BinaryPrimitives.ReadUInt32LittleEndian(bytes[1..]), "the source is the victim");
+                TestAssert.Equal(hero.NetId, BinaryPrimitives.ReadUInt32LittleEndian(bytes[6..]), "ParamsDie's first field is the killer");
+                TestAssert.True(BinaryPrimitives.ReadSingleLittleEndian(bytes[10..]) > 0.0f, "mGoldGiven is the kill's bounty");
+                TestAssert.Equal(1u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[14..]), "mAssistCount");
+                TestAssert.Equal(ally.NetId, BinaryPrimitives.ReadUInt32LittleEndian(bytes[18..]), "mAssists[0]");
+                for (var slot = 1; slot < 12; slot++)
+                    TestAssert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[(18 + slot * 4)..]), "an unused assist slot is 0");
+                TestAssert.True(capture.Packets.FindIndex(p => Opcode(p) == 0x62) < capture.Packets.FindIndex(IsChampionDie),
+                    "the death is delivered before its event");
+                TestAssert.Equal(0, capture.Packets.Count(IsMultiKill));
+            }
+            TestAssert.True(runtime.Combat.RespawnImmediately(enemy));
+            match.Clear();
+            TestAssert.True(runtime.Combat.Kill(enemy), "an execution");
+            runtime.Delivery.Flush();
+            foreach (var capture in match.Captures)
+            {
+                var bytes = capture.Packets.Single(IsChampionDie).Plaintext.Span;
+                TestAssert.Equal(enemy.NetId, BinaryPrimitives.ReadUInt32LittleEndian(bytes[6..]), "no killer: the victim stands in, as in the 0x61");
+                TestAssert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[14..]), "an execution has no assists");
+            }
+        }
+    }
+
+    [Check("protocol.multikill-events")]
+    public static void MultiKillPacketsMatchTheStockEntityEventLayout()
+    {
+        foreach (var (count, expected) in new[] { (2, "ac443322110788776655"),
+                     (3, "ac443322110888776655"), (4, "ac443322110988776655"),
+                     (5, "ac443322110a88776655"), (6, "ac443322110b88776655"),
+                     (7, "ac443322110b88776655") })
+        {
+            var packet = CombatPackets.HeroMultiKill(0x11223344, 0x55667788, count);
+            TestAssert.Equal(Convert.FromHexString(expected), packet.Plaintext.ToArray());
+            TestAssert.Equal((byte)3, packet.Channel);
+            TestAssert.True(packet.Encrypt && packet.Reliability == LeaguePacketReliability.Reliable);
+            var decoded = WirePacketDecoder.Decode(packet.Plaintext.Span, packet.Channel);
+            TestAssert.True(decoded.HasDecoder);
+            TestAssert.Equal("OnEntityEvent", decoded.Name);
+            TestAssert.Equal(0x11223344u, (uint)decoded.Fields["source_netid"]!);
+            TestAssert.Equal(0x55667788u, (uint)decoded.Fields["other_netid"]!);
+            TestAssert.Equal((byte)Math.Min(count + 5, 11), (byte)decoded.Fields["event_id"]!);
+        }
+        TestAssert.Throws<ArgumentOutOfRangeException>(() => CombatPackets.HeroMultiKill(1, 2, 1));
+    }
+
+    [Check("combat.multikill-credit-and-tiers")]
+    public static void MultiKillsFollowChampionCreditAcrossDeathsAndPetKills()
+    {
+        foreach (var team in new[] { Team.Order, Team.Chaos })
+        {
+            using var match = new Match("Annie", team, ally: true);
+            var runtime = match.Runtime; var hero = match.Hero(0); var enemy = match.Hero(1);
+            var box = new Entity(runtime.World.Allocate(UnitType.Minion), EntityKind.ShacoBox,
+                UnitType.Minion, team, hero.Position) { OwnerNetId = hero.NetId, Health = 100, MaxHealth = 100 };
+            runtime.World.Register(box);
+            for (var count = 1; count <= 7; count++)
+            {
+                if (count > 1)
+                {
+                    // Seven seconds between kills, but much longer from the
+                    // first to the last, exercises the rolling window.
+                    runtime.Combat.CombatTick(7, regenerate: false);
+                    TestAssert.True(runtime.Combat.RespawnImmediately(enemy));
+                }
+                match.Clear();
+                TestAssert.True(runtime.Combat.Kill(enemy, count % 2 == 0 ? box.NetId : hero.NetId));
+                runtime.Combat.ScheduleRespawn(enemy);
+                TestAssert.False(runtime.Combat.Kill(enemy, hero.NetId));
+                runtime.Delivery.Flush();
+                TestAssert.Equal(count, hero.ChampionKills);
+                TestAssert.Equal(count, hero.MatchStatistics.LargestMultiKill);
+                TestAssert.Equal(0, match.Hero(2).MatchStatistics.LargestMultiKill, "assist/global-gold recipients do not gain a multi-kill");
+                foreach (var capture in match.Captures)
+                {
+                    var packets = capture.Packets.Where(IsMultiKill).ToArray();
+                    TestAssert.Equal(count == 1 ? 0 : 1, packets.Length);
+                    if (count == 1) continue;
+                    var bytes = packets.Single().Plaintext.Span;
+                    TestAssert.Equal(10, bytes.Length);
+                    TestAssert.Equal(hero.NetId, BinaryPrimitives.ReadUInt32LittleEndian(bytes[1..]));
+                    TestAssert.Equal((byte)Math.Min(count + 5, 11), bytes[5]);
+                    TestAssert.Equal(enemy.NetId, BinaryPrimitives.ReadUInt32LittleEndian(bytes[6..]));
+                    TestAssert.True(capture.Packets.FindIndex(p => Opcode(p) == 0x62) <
+                        capture.Packets.FindIndex(IsMultiKill), "death is delivered before its multi-kill");
+                }
+                if (count == 1)
+                {
+                    TestAssert.True(runtime.Combat.Kill(hero), "posthumous box credit retains the timed chain");
+                    runtime.Combat.ScheduleRespawn(hero);
+                }
+            }
+            var stats = hero.MatchStatistics;
+            TestAssert.Equal((1, 1, 1, 1, 2), (stats.DoubleKills, stats.TripleKills,
+                stats.QuadraKills, stats.PentaKills, stats.UnrealKills));
+            var frozen = stats.Snapshot(runtime.Combat.CurrentTime);
+            var nexus = runtime.World.Entities.Values.Single(unit => unit.Kind == EntityKind.Nexus && unit.Team != team);
+            runtime.Combat.Kill(nexus, hero.NetId);
+            var result = runtime.Session.Result!;
+            TestAssert.Equal(JsonSerializer.Serialize(frozen), JsonSerializer.Serialize(result.Players[0].Statistics));
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(result));
+            var saved = json.RootElement.GetProperty("Players")[0].GetProperty("Statistics");
+            TestAssert.Equal(7, saved.GetProperty("LargestMultiKill").GetInt32());
+            TestAssert.Equal(2, saved.GetProperty("UnrealKills").GetInt32());
+        }
+    }
+
+    [Check("combat.multikill-window-boundaries")]
+    public static void MultiKillWindowIgnoresUncreditedAndNonChampionDeaths()
+    {
+        foreach (var team in new[] { Team.Order, Team.Chaos })
+        foreach (var gap in new[] { 7.999, 8.0, 8.001 })
+        {
+            using var match = new Match("Annie", team);
+            var runtime = match.Runtime; var hero = match.Hero(0); var enemy = match.Hero(1);
+            TestAssert.True(runtime.Combat.Kill(enemy, hero.NetId));
+            runtime.Combat.ScheduleRespawn(enemy);
+            runtime.Combat.CombatTick(4, regenerate: false);
+            foreach (var kind in new[] { EntityKind.Minion, EntityKind.Neutral, EntityKind.Pet, EntityKind.Ward })
+            {
+                var unit = new Entity(runtime.World.Allocate(UnitType.Minion), kind,
+                    UnitType.Minion, enemy.Team, enemy.Position) { Health = 100, MaxHealth = 100 };
+                runtime.World.Register(unit);
+                TestAssert.True(runtime.Combat.Kill(unit, hero.NetId));
+            }
+            TestAssert.True(runtime.Combat.RespawnImmediately(enemy));
+            TestAssert.True(runtime.Combat.Kill(enemy), "an execution without champion credit does not extend a chain");
+            runtime.Combat.ScheduleRespawn(enemy);
+            runtime.Combat.CombatTick(gap - 4, regenerate: false);
+            TestAssert.True(runtime.Combat.RespawnImmediately(enemy));
+            match.Clear();
+            TestAssert.True(runtime.Combat.Kill(enemy, hero.NetId));
+            runtime.Delivery.Flush();
+            var qualifies = gap <= 8;
+            TestAssert.Equal(qualifies ? 2 : 1, hero.MatchStatistics.LargestMultiKill);
+            TestAssert.Equal(qualifies ? 1 : 0, hero.MatchStatistics.DoubleKills);
+            foreach (var capture in match.Captures)
+                TestAssert.Equal(qualifies ? 1 : 0, capture.Packets.Count(IsMultiKill));
+        }
+    }
+
+    [Check("network.multikill-fog-and-reconnect")]
+    public static void MultiKillEventsUseKnownHeroesAndAreNotReplayedOnReconnect()
+    {
+        foreach (var team in new[] { Team.Order, Team.Chaos })
+        {
+            using var match = new Match("Annie", team, extraEnemy: true);
+            var runtime = match.Runtime; var session = runtime.Session;
+            var hero = match.Hero(0); var victim = match.Hero(1); var viewer = match.Hero(2);
+            hero.Position = new(7000, 7000); victim.Position = new(11000, 11000); viewer.Position = new(1000, 13000);
+            runtime.Delivery.Flush();
+            TestAssert.False(session.Participants[2].View.Visible.Contains(hero.NetId));
+            runtime.Combat.Kill(victim, hero.NetId);
+            runtime.Combat.ScheduleRespawn(victim);
+            TestAssert.True(runtime.Combat.RespawnImmediately(victim));
+            runtime.Combat.Kill(victim, hero.NetId);
+            runtime.Combat.ScheduleRespawn(victim);
+            runtime.Delivery.Flush();
+            var effect = match.Captures[2].Packets.Single(IsMultiKill);
+            TestAssert.Equal(Convert.FromHexString("ac010000400702000040"), effect.Plaintext.ToArray());
+            TestAssert.True(effect.Encrypt && effect.Reliability == LeaguePacketReliability.Reliable);
+            TestAssert.Equal(new[] { hero.NetId, victim.NetId }, effect.EntityReferences.Select(r => r.NetId).ToArray());
+            TestAssert.False(session.Participants[2].View.Visible.Contains(hero.NetId), "announcements do not reveal the killer");
+
+            var seat = session.Participants[0];
+            var statistics = hero.MatchStatistics;
+            TestAssert.True(session.Disconnect(1));
+            var packets = session.Receive(10, 0, session.BuildKeyCheck(seat.PlayerId)).ToList();
+            packets.AddRange(session.Receive(10, 1, new byte[] { 0xC6 }));
+            packets.AddRange(session.Receive(10, 1, new byte[] { 0xC7, 0, 0, 0, 0 }));
+            runtime.World.Clock.SetVirtual(seat.SpawnAt!.Value);
+            packets.AddRange(session.RunSchedulers());
+            packets.AddRange(session.Receive(10, 1, new byte[] { 0xA5, 0, 0, 0, 0, 1 }));
+            packets.AddRange(session.Receive(10, 1, new byte[] { 0xC7, 0, 0, 0, 0 }));
+            packets.AddRange(session.RunSchedulers());
+            TestAssert.True(seat.Spawned && seat.Ready);
+            TestAssert.True(ReferenceEquals(statistics, seat.Hero!.MatchStatistics));
+            TestAssert.Equal((2, 1), (statistics.LargestMultiKill, statistics.DoubleKills));
+            TestAssert.False(packets.Any(packet => packet.Packet.Plaintext.Span[0] == 0xAC),
+                "reconnect does not replay additive historical events");
+            TestAssert.True(runtime.Combat.RespawnImmediately(victim));
+            match.Clear();
+            runtime.Combat.Kill(victim, hero.NetId);
+            runtime.Delivery.Flush();
+            TestAssert.Equal(1, statistics.TripleKills, "reconnecting does not reset the live chain");
+            TestAssert.Equal((byte)8, match.Captures[2].Packets.Single(IsMultiKill).Plaintext.Span[5], "OnChampionTripleKill");
+        }
+    }
+}
