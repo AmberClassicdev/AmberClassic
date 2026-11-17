@@ -23,6 +23,7 @@ short code such as `(A-NET-02)`: look it up in [TROUBLESHOOTING.md](TROUBLESHOOT
 - [Only your home network (LAN party)](#only-your-home-network-lan-party)
 - [When your address changes](#when-your-address-changes)
 - [Removing Amberline](#removing-amberline)
+- [Moving from the 1.0.0.126 line](#moving-from-the-100126-line)
 - [A rented server](#a-rented-server)
 
 ## What you need
@@ -220,6 +221,11 @@ its size and the free space, and asks **Delete the original folders you picked?*
 
 You play from this PC too, so you need a login of your own.
 
+If this PC also has an Amberline for 1.0.0.126, the step first offers **Copy the logins from your Amberline for 1.0.0.126**, with how
+many it found (and **yours among them** when your own login there is one). **Copy the logins** copies them. Then, under **Your login
+from 1.0.0.126**, type that login's password and choose **Use this login** to make it your own login here. See
+[Moving from the 1.0.0.126 line](#moving-from-the-100126-line). Or make a new login:
+
 - **Username**: 3 to 24 letters (a to z), digits or `_`. You type it when you log in.
 - **Summoner name**: what other players see.
 - **Password**: at least 10 characters. Amberline never shows it again.
@@ -346,7 +352,8 @@ Your own login is not in the list: it is the one you play with, and [Advanced](#
 
 Above the list are **Add a user**, **Get the Play file** (once your address is known) and **Copy sign-up link** (while sign-ups are on).
 Type in **Search users** to filter the list as you type. **Copy the My account link** copies the address where users change their own
-password or delete their login (see [My account](#my-account)).
+password or delete their login (see [My account](#my-account)). While your Amberline for 1.0.0.126 has a login that is not here yet,
+**Copy the logins** stands above the list (see [Moving from the 1.0.0.126 line](#moving-from-the-100126-line)).
 
 - **New password**: for a user who lost theirs. The old password stops working at once, and the user is logged out. The new one is
   shown once, in a message to send.
@@ -597,6 +604,31 @@ The easy way: **Settings**, **Uninstall Amberline**, or `Uninstall Amberline.cmd
 A 1.0.0.126 Amberline on the same PC has its own folder, icon, file and rules without "132": leave them.
 
 The `READ ME.txt` in the install folder lists the same steps, with your folder's exact path.
+
+## Moving from the 1.0.0.126 line
+
+This Amberline is a second program beside an Amberline for 1.0.0.126: installing it starts fresh, and the 1.0.0.126 one (its folder,
+its icon, its logins and everything else) stays as it is and keeps working.
+
+- **Copy the logins**: on the setup page's [step 3](#step-3-of-4-your-own-login), and on [Users](#users) while a login there is not
+  here yet, Amberline offers **Copy the logins from your Amberline for 1.0.0.126: N logins found**. It finds the Amberline that your
+  Windows account installed (in `C:\Amberline` or the folder you chose) and only reads its files. An Amberline in `C:\Amberline` that
+  your account did not install counts only while other people who use this PC cannot change its files, and no install counts whose
+  folders or files are links to another place; otherwise the page says so and copies nothing.
+- **What is copied**: each login's username, summoner name and password (your users keep logging in with the password they have),
+  whether it starts at level 30 with everything unlocked or at level 1, and the **Signed up** and **Disabled** marks. Every copied
+  login is a user. Your own login there becomes your own login here once you type its password on the setup page's step 3.
+- **What is not copied**: progress. What each user owns (champions, skins, IP, RP, runes and rune pages), masteries, match history
+  and ranked stay with the 1.0.0.126 server: here each copied login starts as a new login. Logins you deleted there, the server's
+  name, address and settings are not copied either.
+- A login whose username or summoner name is used here already is not copied, and the page names it. A login Amberline could not
+  read is counted and left out.
+- While the 1.0.0.126 Amberline runs, the page says so: close its window, then open the page again.
+- **Ports**: this line has its own, sign-in TCP 8491 and games UDP 5319 to 5322 (1.0.0.126: TCP 8391 and UDP 5219 to 5222), and its
+  own Windows Firewall rules. If you forwarded the 1.0.0.126 ports on your router by hand, forward these too
+  ([Your router](#your-router)). Both use chat port 5222, so only one Amberline runs at a time.
+- **Your users need this server's Play file**: the old one starts the 1.0.0.126 server. Send everyone the new Play file
+  (**Get the Play file** on [Users](#users)), and tell them their username and password stay the same.
 
 ## A rented server
 

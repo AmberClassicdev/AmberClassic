@@ -143,10 +143,12 @@ public sealed partial class PlatformAccounts : IDisposable
     {
         username = username.Trim().ToLowerInvariant();
         summoner = summoner.Trim();
-        lock (_gate)
-            return _state.Accounts.Any(a => a.Username == username || a.Summoner.Equals(summoner, StringComparison.OrdinalIgnoreCase))
-                ? "Username or summoner name is already taken." : null;
+        lock (_gate) return Taken(_state.Accounts, username, summoner) ? "Username or summoner name is already taken." : null;
     }
+
+    /// <summary>Whether a login of <paramref name="accounts"/> has the username, or the summoner name in any case (both already trimmed, the username lower-cased).</summary>
+    private static bool Taken(IEnumerable<PlatformAccount> accounts, string username, string summoner) =>
+        accounts.Any(a => a.Username == username || a.Summoner.Equals(summoner, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Public self-service registration used by a host that is reachable by its configured endpoint.</summary>
     /// <param name="signedUp">Batch 748: the person made it on the sign-up page (<see cref="HostSelfRegistration"/>), not the host.</param>
@@ -161,22 +163,77 @@ public sealed partial class PlatformAccounts : IDisposable
         lock (_gate)
         {
             if (TakenRefusal(username, summoner) is { } taken) throw new ArgumentException(taken);
-            var id = _state.NextId;
-            if (id >= int.MaxValue - 1_000_000) throw new ArgumentException("Account capacity reached.");
-            var defaultChampion = EconomyRules.FreeChampionIds
-                .Select(id => AirGameDtos.ChampionNames.TryGetValue(id, out var name) ? name : null)
-                .FirstOrDefault(name => name is not null) ?? "Annie";
-            var loadout = new MatchPlayer(summoner, defaultChampion, Team.Order,
-                SummonerSpell1: maxed ? SummonerLoadout.DefaultFirst : "SummonerHeal",
-                SummonerSpell2: maxed ? SummonerLoadout.DefaultSecond : "SummonerHaste",
-                SummonerLevel: maxed ? 30 : 1);
-            var account = new PlatformAccount(id, SummonerIdFor(id), username, summoner,
-                Convert.ToHexString(salt), Convert.ToHexString(hash), loadout,
-                // Batch 706: a full account gets every rune page up to the host's cap; an economy account starts with two.
-                RunePages: SeedRunePages(loadout, maxed ? EconomyRules.MaximumRunePages : 2), Economy: maxed ? null :
-                    new PlatformEconomyData(false, 0, 0, 0, 1, [], [], new Dictionary<int, int>(), [], []), SignedUp: signedUp);
-            Save(_state with { NextId = checked(id + 1), Accounts = [.. _state.Accounts, account] });
+            var account = NewAccount(_state.NextId, username, summoner, Convert.ToHexString(salt), Convert.ToHexString(hash), maxed, signedUp);
+            Save(_state with { NextId = checked(account.Id + 1), Accounts = [.. _state.Accounts, account] });
             return account;
+        }
+    }
+
+    /// <summary>
+    /// A new login as this store makes one (<see cref="RegisterPublic"/>, and batch 830's <see cref="Copy"/>): the id, its summoner id, the
+    /// first free champion, the start's spells and level, the rune pages, and level 1's empty economy (<paramref name="maxed"/> false) or none.
+    /// </summary>
+    private PlatformAccount NewAccount(long id, string username, string summoner, string salt, string hash, bool maxed, bool signedUp)
+    {
+        if (id >= int.MaxValue - 1_000_000) throw new ArgumentException("Account capacity reached.");
+        var defaultChampion = EconomyRules.FreeChampionIds
+            .Select(id => AirGameDtos.ChampionNames.TryGetValue(id, out var name) ? name : null)
+            .FirstOrDefault(name => name is not null) ?? "Annie";
+        var loadout = new MatchPlayer(summoner, defaultChampion, Team.Order,
+            SummonerSpell1: maxed ? SummonerLoadout.DefaultFirst : "SummonerHeal",
+            SummonerSpell2: maxed ? SummonerLoadout.DefaultSecond : "SummonerHaste",
+            SummonerLevel: maxed ? 30 : 1);
+        return new PlatformAccount(id, SummonerIdFor(id), username, summoner, salt, hash, loadout,
+            // Batch 706: a full account gets every rune page up to the host's cap; an economy account starts with two.
+            RunePages: SeedRunePages(loadout, maxed ? EconomyRules.MaximumRunePages : 2), Economy: maxed ? null :
+                new PlatformEconomyData(false, 0, 0, 0, 1, [], [], new Dictionary<int, int>(), [], []), SignedUp: signedUp);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 830; retail's logins lived in Riot's account databases): a login read from another Amberline's store, the other patch
+    /// line's on this PC (<see cref="HostLoginCopy"/>). Only what signs it in and names it: the username, the summoner name, the salt and
+    /// password hash (this store's own PBKDF2 scheme, which both lines share), whether it starts at level 30 with everything unlocked
+    /// (<paramref name="Maxed"/>: its store kept no economy, or everything unlocked) or at level 1, the sign-up page's mark and a removed access.
+    /// </summary>
+    public sealed record CopiedLogin(string Username, string Summoner, string Salt, string PasswordHash, bool Maxed, bool SignedUp,
+        DateTimeOffset? AccessRemovedAt);
+
+    /// <summary>
+    /// Whether this store could keep <paramref name="login"/> as it is: its names pass <see cref="Refusals"/> as stored (trimmed, the username in
+    /// lower case), its salt is 16 and its hash 32 bytes in hexadecimal (<see cref="Authenticate"/> reads them so).
+    /// </summary>
+    public static bool Usable(CopiedLogin login)
+    {
+        var (username, _, summoner) = Refusals(login.Username, new string('x', 10), login.Summoner);
+        return username is null && summoner is null && login.Username == login.Username.Trim().ToLowerInvariant() &&
+            login.Summoner == login.Summoner.Trim() && Hex(login.Salt, 16) && Hex(login.PasswordHash, 32);
+        static bool Hex(string text, int bytes) => text.Length == 2 * bytes && text.All(char.IsAsciiHexDigit);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 830, owner 16 November 2026: "Yes, add it"): the logins of another line's Amberline copied in, in one save. Each gets
+    /// a new id from this store and a new login's champion, runes, level and economy (<see cref="NewAccount"/>), with its own salt and hash,
+    /// so it signs in with the same password. A login whose username or summoner name this store already has (or an earlier one of the
+    /// list took) is not copied: it is in <c>Taken</c>, by username. Nothing that was there is changed.
+    /// </summary>
+    public (PlatformAccount[] Copied, string[] Taken) Copy(IReadOnlyList<CopiedLogin> logins)
+    {
+        if (logins.FirstOrDefault(login => !Usable(login)) is not null) throw new ArgumentException("A copied login does not pass this store's rules.");
+        lock (_gate)
+        {
+            var state = _state;
+            List<PlatformAccount> copied = [];
+            List<string> taken = [];
+            foreach (var login in logins)
+            {
+                if (Taken(state.Accounts, login.Username, login.Summoner)) { taken.Add(login.Username); continue; }
+                var account = NewAccount(state.NextId, login.Username, login.Summoner, login.Salt, login.PasswordHash, login.Maxed, login.SignedUp)
+                    with { AccessRemovedAt = login.AccessRemovedAt };
+                copied.Add(account);
+                state = state with { NextId = checked(account.Id + 1), Accounts = [.. state.Accounts, account] };
+            }
+            if (copied.Count > 0) Save(state);
+            return ([.. copied], [.. taken]);
         }
     }
 

@@ -25,4 +25,11 @@ public static class PlatformLine
     /// </summary>
     public const string ReleaseQuery = "https://api.github.com/repos/Amberline-Dev/Project-Amberline/releases?per_page=100";
     public const string ReleaseTagPrefix = "p132-v";
+
+    /// <summary>
+    /// NOT RETAIL (batch 830, owner 16 November 2026): the 1.0.0.126 line's home install, whose logins this line's setup and Users offer to copy
+    /// (<see cref="HostLoginCopy"/>): its <c>FolderMove.HostName</c> and <c>InstallMarker</c> (<c>126/patch.json</c> "home"). The 1.0.0.126
+    /// line has no such value; its Program.cs offers no copy.
+    /// </summary>
+    public static readonly EarlierHome CopyLoginsFrom = new("Amberline", "amberline-install.json", "1.0.0.126");
 }

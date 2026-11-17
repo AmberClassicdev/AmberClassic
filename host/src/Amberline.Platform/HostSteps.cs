@@ -147,13 +147,15 @@ public sealed class HostSteps
         SettingsAddress = new(HostSettingsPage.AddressPath, 0, HostSettingsPage.PagePath, HostSettingsPage.PagePath + "?saved=address", "Save");
     private readonly HostLoop _loop;
     private readonly PlatformAccounts? _accounts;
+    private readonly HostLoginCopy? _copy;
     private readonly Lock _save = new();
     private volatile string? _publicHost, _serverName, _addressSource;
 
-    private HostSteps(HostLoop loop, PlatformAccounts? accounts)
+    private HostSteps(HostLoop loop, PlatformAccounts? accounts, HostLoginCopy? copy)
     {
         _loop = loop;
         _accounts = accounts;
+        _copy = copy;
         var saved = Saved();
         _publicHost = saved.PublicHost;
         _serverName = saved.ServerName;
@@ -169,10 +171,13 @@ public sealed class HostSteps
     /// <summary>Called after a saved address turned the home-network choice on or off (the dashboard tests the network again).</summary>
     internal Action? HomeNetworkChanged { get; set; }
 
-    /// <summary>The steps of the running mode: setup mode (no account store) has the name; the full Platform has every step.</summary>
-    public static HostSteps Map(WebApplication app, HostLoop loop, PlatformAccounts? accounts)
+    /// <summary>
+    /// The steps of the running mode: setup mode (no account store) has the name; the full Platform has every step. Batch 830: with
+    /// <paramref name="copy"/> (the 1.0.0.132 line's Program.cs) the own-login step also offers to copy the other line's logins.
+    /// </summary>
+    public static HostSteps Map(WebApplication app, HostLoop loop, PlatformAccounts? accounts, HostLoginCopy? copy = null)
     {
-        var steps = new HostSteps(loop, accounts);
+        var steps = new HostSteps(loop, accounts, copy);
         app.MapGet(Start, () => Results.Redirect(steps.Next()));
         steps.MapName(app, FirstName);
         if (accounts is null)
@@ -272,7 +277,8 @@ public sealed class HostSteps
 
     private IResult LoginPage(PlatformAccounts accounts, string token)
     {
-        if (Saved().HostAccount is not long id || accounts.Find(id) is not { } account) return HostMode.Page(LoginForm(token, [], "", "", "maxed"), step: 3);
+        if (Saved().HostAccount is not long id || accounts.Find(id) is not { } account)
+            return HostMode.Page(LoginForm(token, [], "", "", "maxed", _copy?.Offer(token, setup: true) ?? ""), step: 3);
         return HostMode.Page($"""
             <h1>Your own login</h1>
             <p>Your login <b>{WebUtility.HtmlEncode(account.Username)}</b> is ready.</p>
@@ -299,7 +305,8 @@ public sealed class HostSteps
             }
             catch (ArgumentException ex) { problems = [ex.Message]; }
         }
-        return HostMode.Page(LoginForm(Program.RegistrationToken(context, antiforgery), problems, username, summoner, mode),
+        var token = Program.RegistrationToken(context, antiforgery);
+        return HostMode.Page(LoginForm(token, problems, username, summoner, mode, _copy?.Offer(token, setup: true) ?? ""),
             StatusCodes.Status400BadRequest, step: 3);
     }
 
@@ -456,11 +463,12 @@ public sealed class HostSteps
         <label class=choice><input type=radio name=mode value=fresh{Checked(mode == "fresh")}>Level 1, earn everything</label></fieldset>
         """;
 
-    private static string LoginForm(string token, IReadOnlyList<string> problems, string username, string summoner, string mode)
+    /// <param name="offer">Batch 830: the offer to copy the other line's logins (<see cref="HostLoginCopy.Offer"/>), or empty.</param>
+    private static string LoginForm(string token, IReadOnlyList<string> problems, string username, string summoner, string mode, string offer)
     {
         var shown = problems.Select(HostPages.LoginProblem).Select<(string Text, string? Field), (string? Text, string? Field)>(problem => problem).ToArray();
         return $$"""
-            <h1>Your own login</h1>
+            <h1>Your own login</h1>{{(offer.Length == 0 ? "" : "\n" + offer + "<h2>Or make a new login</h2>")}}
             <p>Choose your own login for the game client.</p>
             <p class=tip>Your name and folders are saved; Settings changes them later.</p>
             {{HostPages.Errors(shown)}}

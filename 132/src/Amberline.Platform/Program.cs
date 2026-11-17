@@ -275,15 +275,19 @@ public static class Program
         app.MapGet("/health", () => Results.Json(Health(home: host is not null)));
         // NOT RETAIL: the home host's pages answer only the host's signed-in browser (HostGate); /open signs it in.
         if (host is not null) HostGate.Use(app, settings.HttpPort, host.Sessions, HostSteps.Start, context => signUp!.Serves(context) || accountPage!.Serves(context));
+        // NOT RETAIL (batch 830): this line's own-login step and Users offer to copy the logins of a 1.0.0.126 Amberline on this PC
+        // (HostLoginCopy, PlatformLine.CopyLoginsFrom); the 1.0.0.126 line's Program.cs offers none.
+        var copy = host is null ? null : new HostLoginCopy(host, accounts, PlatformLine.CopyLoginsFrom);
+        copy?.Map(app);
         // NOT RETAIL: the home host's first-run steps; the name and the address they save reach /bootstrap/client.json at once.
-        var steps = host is null ? null : HostSteps.Map(app, host, accounts);
+        var steps = host is null ? null : HostSteps.Map(app, host, accounts, copy);
         // NOT RETAIL: the host pages' shell and stylesheet (HostPages), after the gate so its refusal pages stay bare.
         if (host is not null) HostPages.Use(app, host, () => steps!.ServerName, nav: true);
         if (host is not null) HostPlay.Map(app, host, settings);
         if (host is not null) HostUpdates.Map(app, host, () => HostDashboard.RunningGames(manager).Count);
         // NOT RETAIL: Users and Add a user: the logins, their status and actions, and the Play file, under the gated /host pages.
         if (host is not null) HostInvite.Map(app, host, () => steps!.PublicHost, () => steps!.ServerName, accounts, sessions, remoteAccess,
-            settings.RemotePort, pin, signUp, games, chat);
+            settings.RemotePort, pin, signUp, games, chat, copy);
         signUp?.Map(app);
         accountPage?.Map(app);
         share?.Map(app);

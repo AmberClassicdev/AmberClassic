@@ -111,6 +111,12 @@ public sealed class HostLoop(HostPaths paths, Action<string> openBrowser, TextWr
     /// </summary>
     public HostReleases Releases { get; set; } = HostReleases.Offline;
 
+    /// <summary>
+    /// Batch 830: where the setup looks for the other patch line's Amberline whose logins it offers to copy (<see cref="HostLoginCopy"/>, only on
+    /// a line whose Program.cs offers it). By default nowhere, so a check never reads this PC's; only <see cref="HostMode.MainAsync"/> passes this PC's.
+    /// </summary>
+    public CopyPlaces CopyFrom { get; set; } = CopyPlaces.Nowhere;
+
     /// <summary>The cleanup Uninstall Amberline handed the install folder to; <see cref="HostMode.MainAsync"/> starts it once the loop has ended.</summary>
     public ProcessStartInfo? Cleanup { get; internal set; }
 
@@ -242,6 +248,7 @@ public static class HostMode
             {
                 Folders = FolderSetup.ThisPc(), Addresses = HostAddressSources.Live, Play = new(HostPlay.Start), Network = HostNetwork.Windows,
                 NextProcess = ThisProgram(), Restarted = restarted, Uninstall = UninstallPlaces.ThisPc(), Releases = HostReleases.Live,
+                CopyFrom = CopyPlaces.ThisPc(),
             });
         // A new process that a Restart started asked for Enter itself.
         if (exit != 0 && loop?.HandedOver != true) WaitForEnter(screen);

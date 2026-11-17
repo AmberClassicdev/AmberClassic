@@ -61,9 +61,10 @@ public static class HostInvite
     /// Add a user also shows its link (and Users its Copy sign-up link). Batch 748: <paramref name="games"/> gives the status In game and
     /// keeps Delete from a user in a game (without it the store's own rule decides), and <paramref name="chat"/> forgets a deleted user.
     /// </summary>
+    /// <param name="loginCopy">Batch 830: the offer to copy the other line's logins on Users (the 1.0.0.132 line's Program.cs passes it), or none.</param>
     public static void Map(WebApplication app, HostLoop loop, Func<string?> publicHost, Func<string?> serverName, PlatformAccounts accounts,
         PlatformSessions sessions, AirRemoteAccess remoteAccess, int remotePort, string certificateSha256, HostSelfRegistration? signUp = null,
-        PlatformGames? games = null, AirXmppHost? chat = null)
+        PlatformGames? games = null, AirXmppHost? chat = null, HostLoginCopy? loginCopy = null)
     {
         string Name() => serverName() ?? DefaultName;
         var removal = new UserRemoval(loop, accounts, games, sessions, remoteAccess, chat);
@@ -258,7 +259,8 @@ public static class HostInvite
                   "<table><thead><tr><th scope=col>User</th><th scope=col>Status</th><th scope=col>Actions</th></tr></thead>" +
                   $"<tbody id=users>{string.Concat(users.Select(Row))}</tbody></table><p id=users-none class=empty hidden>No users match your search.</p>" +
                   "<p class=tip>New password and Disable log the user out at once and keep their games. Delete cannot be undone.</p>";
-            return $"<h1>Users ({users.Length})</h1>{shown}<div class=\"buttons user-actions\"><a class=button href={AddPath}>Add a user</a>{copy}{play}</div>{list}";
+            return $"<h1>Users ({users.Length})</h1>{shown}<div class=\"buttons user-actions\"><a class=button href={AddPath}>Add a user</a>{copy}{play}</div>" +
+                $"{loginCopy?.Offer(token, setup: false)}{list}";
         }
     }
 
