@@ -8,6 +8,16 @@ patch 1.0.0.126 (its folder holds `DATA` and `LEVELS`) and its AIR client (its f
 (`patch-1.0.0.126-client-bundle.zip`) that holds both, on Windows 10 or 11 (64-bit). A host who may share their own copy can let their players download it from their server
 ([Game files](HOSTING.md#game-files)).
 
+## Downloads
+
+| Patch | Newest release | Hosting guide |
+|---|---|---|
+| 1.0.0.126 (October 2011) | [Amberline, latest release](https://github.com/Amberline-Dev/Project-Amberline/releases/latest) | [HOSTING.md](HOSTING.md) |
+| 1.0.0.132 (January 2012) | [Amberline 132 0.1.2](https://github.com/Amberline-Dev/Project-Amberline/releases/tag/p132-v0.1.2) | [132/HOSTING.md](132/HOSTING.md) |
+
+The **Releases** box on the right shows only the 1.0.0.126 line's newest release; [all releases](https://github.com/Amberline-Dev/Project-Amberline/releases)
+lists both lines.
+
 ## Host a server
 
 1. **Download** `Amberline-<version>-win-x64.zip` from the
