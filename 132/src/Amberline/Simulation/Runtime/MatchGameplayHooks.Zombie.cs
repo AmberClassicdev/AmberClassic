@@ -96,7 +96,10 @@ public sealed partial class MatchGameplayHooks
         Combat.DespawnPetsOf(unit.NetId);
         if (Effects.IsReferenceReady(unit))
         {
-            Effects.SendForceDead(unit);
+            // Batch 833 (V1.0.0.131 hotfix, "death timers weren't displaying the correct time until respawn"): the 132 ForceDead carries the
+            // hero's DeathDuration, and the client counts it down from this packet (CombatPackets.ForceDead), so it is the time left to the respawn.
+            Effects.SendForceDead(unit, unit.UnitType == UnitType.Hero && unit.RespawnAt > 0.0
+                ? Math.Max(0.0, unit.RespawnAt - Combat.CurrentTime) : 0.0);
             Effects.SendStats(unit);
         }
         return true;

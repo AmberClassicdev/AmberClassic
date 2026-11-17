@@ -31,9 +31,70 @@ public sealed partial class ReplicationDelivery
         IReadOnlyList<ReplicationObserver> active)
     {
         var states = new Dictionary<Team, TeamVisibilityState>();
-        foreach (var team in active.Select(observer => observer.Team).Distinct())
+        foreach (var team in active.SelectMany(TeamsOf).Distinct())
             states.Add(team, VisibilityState(team, VisibilityRules.BuildTeamProviders(World, team, Balls, AdditionalProviders)));
+        // Batch 847: the spectator sees what either team sees (design 845 C4), both teams computed even when one has no player of its own.
+        if (active.Any(observer => observer.Spectator))
+        {
+            var (order, chaos) = (states[Team.Order], states[Team.Chaos]);
+            states.Add(ReplicationObserver.SpectatorTeam, new TeamVisibilityState([.. order.Providers, .. chaos.Providers],
+                [.. order.Raw, .. chaos.Raw], [.. order.VisibleBalls, .. chaos.VisibleBalls]));
+        }
         return states;
+    }
+
+    // DIAGNOSTICS (batch 847): the match thread's time spent on the spectator's view (its refresh, masks and routing), for the recorder's cost.
+    private long _spectatorTicks;
+
+    /// <summary>DIAGNOSTICS (batch 847): wall time this delivery spent on the spectator's view so far (refresh, team masks, routing).</summary>
+    public TimeSpan SpectatorTime => TimeSpan.FromSeconds(_spectatorTicks / (double)System.Diagnostics.Stopwatch.Frequency);
+
+    private long SpectatorClock(ReplicationObserver observer) => observer.Spectator ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+
+    private void SpectatorClocked(ReplicationObserver observer, long started)
+    {
+        if (observer.Spectator) _spectatorTicks += System.Diagnostics.Stopwatch.GetTimestamp() - started;
+    }
+
+    /// <summary>The teams whose sight an observer stands for: its own, or Order and Chaos for the spectator (batch 847).</summary>
+    private static IEnumerable<Team> TeamsOf(ReplicationObserver observer) =>
+        observer.Spectator ? [Team.Order, Team.Chaos] : [observer.Team];
+
+    /// <summary>
+    /// Batch 847: the spectator client's per-unit team mask. The replay client draws a unit only when the team the spectator picked sees it
+    /// (a team when its own bit is), and the bits are set by
+    /// EnterTeamVisibility and cleared by LeaveTeamVisibility (126 0xEE/0xEF; 132 0xEF/0xF0), team 0 Order, 1 Chaos.
+    /// A unit in the view gets its bits from each team's own sight this flush; a dead one keeps the bits it had (raw sight drops corpses while the
+    /// views keep them), and one first seen dead (a sprung trap, shown to both teams) gets both. The mask's starting value on the client was not
+    /// traced, so a unit's first entry sends both bits, set or cleared; after that only a change goes out.
+    /// </summary>
+    private void SyncTeamMasks(ReplicationObserver observer, Dictionary<Team, TeamVisibilityState> teamStates)
+    {
+        var view = observer.View;
+        foreach (var netId in view.TeamMasks.Keys.Where(id => !view.Visible.Contains(id)).ToArray())
+            view.TeamMasks.Remove(netId);
+        var (order, chaos) = (teamStates[Team.Order], teamStates[Team.Chaos]);
+        foreach (var netId in view.Visible)
+        {
+            byte wanted;
+            if (view.BallStates.ContainsKey(netId))
+                wanted = (byte)((order.VisibleBalls.Contains(netId) ? 1 : 0) | (chaos.VisibleBalls.Contains(netId) ? 2 : 0));
+            else if (World.Get(netId) is { Alive: true })
+                wanted = (byte)((order.Raw.Contains(netId) ? 1 : 0) | (chaos.Raw.Contains(netId) ? 2 : 0));
+            else if (view.TeamMasks.ContainsKey(netId)) continue;
+            else wanted = 3;
+            var held = view.TeamMasks.TryGetValue(netId, out var mask) ? mask : (byte?)null;
+            if (held == wanted) continue;
+            for (byte team = 0; team < 2; team++)
+            {
+                var bit = (byte)(1 << team);
+                if (held is byte known && (known & bit) == (wanted & bit)) continue;
+                Send(observer, (wanted & bit) != 0
+                    ? VisionPackets.EnterTeamVisibility(netId, team)
+                    : VisionPackets.LeaveTeamVisibility(netId, team));
+            }
+            view.TeamMasks[netId] = wanted;
+        }
     }
 
     // A nearsighted hero's client keeps only its own sight list (VisibilityRules.BuildObserverProviders) and does not light the global vision
@@ -314,7 +375,8 @@ public sealed partial class ReplicationDelivery
             // A dead unit's buffs end with it; its field is brought back to the buffs' sum when it lives again.
             // Batch 462: a point turret (Entity.ReplicatedAsMinion) is a minion on the client and takes the minion block; its sight follows the
             // capture trees' IncPermanentPercentBubbleRadiusMod. The scene turrets keep their own layout.
-            if (entity.Team != observer.Team || !entity.Alive || entity.Placemarker || !view.Known.Contains(entity.NetId) ||
+            // Batch 847: the spectator's fog field draws both teams' bubbles, so it holds both teams' modifiers.
+            if (!observer.Allied(entity.Team) || !entity.Alive || entity.Placemarker || !view.Known.Contains(entity.NetId) ||
                 entity.IsSceneTurret || entity.UnitType is UnitType.Structure or UnitType.Missile) continue;
             var (flat, percent) = VisibilityRules.BubbleRadiusMods(entity);
             var wanted = ((float)flat, (float)percent);
@@ -369,7 +431,7 @@ public sealed partial class ReplicationDelivery
             // six shipped characters such as OdinSpeedShrine and TestCube, batch 464): IsUnit, (percent + 1) * CharacterData PerceptionBubbleRadius + flat, kept current by the modifier updates and
             // drawn while the unit is alive and seen. The client never reads the spawn packet's VisibilitySize (the stored field), so that
             // bubble is the only one the server sends here (Reconstruction: VisibilitySize as a second sight bubble, VisibilitySizeRange).
-            if (entity is null || entity.Team != observer.Team || entity.VisibilitySize <= 0.0)
+            if (entity is null || !observer.Allied(entity.Team) || entity.VisibilitySize <= 0.0)
                 continue;
             var radius = VisibilityRules.VisibilitySizeRange(entity);
             if (radius > 0.0)
@@ -398,7 +460,8 @@ public sealed partial class ReplicationDelivery
         var activeTimed = new HashSet<uint>();
         foreach (var bubble in World.TimedVisionBubbles)
         {
-            if (bubble.Team != observer.Team || bubble.Remaining <= 0.0) continue;
+            // Batch 847: the spectator holds both teams' timed bubbles, each under its own team.
+            if (!observer.Allied(bubble.Team) || bubble.Remaining <= 0.0) continue;
             // Batch 452: a SpecificUnitsClientOnly bubble is shown to the client of that unit alone (the observer whose hero it is).
             if (bubble.ClientOnlyNetId != 0 && observer.HeroNetId != bubble.ClientOnlyNetId) continue;
             if (bubble.BubbleId == 0 || bubble.Radius < 0.0)
@@ -419,11 +482,11 @@ public sealed partial class ReplicationDelivery
                 if (!Amberline.Network.Diagnostics.OdinRelicBubbleGate.Withholds(World.Get(bubble.AnchorNetId)?.ChampionName))
                     Send(observer, SpawnPackets.AddUnitPerceptionBubble(
                         bubble.AnchorNetId, radius, ttl, bubble.BubbleId,
-                        (uint)observer.Team, flags: bubble.RevealStealth ? 5u : 0u, revealSpecificNetworkId: bubble.RevealUnitNetId));
+                        (uint)bubble.Team, flags: bubble.RevealStealth ? 5u : 0u, revealSpecificNetworkId: bubble.RevealUnitNetId));
             }
             else
                 Send(observer, SpawnPackets.AddPerceptionBubble(new(
-                    (uint)observer.Team,
+                    (uint)bubble.Team,
                     new Position3(bubble.Position.X, 100.0, bubble.Position.Z),
                     radius, ttl, bubble.BubbleId, RevealSpecificNetworkId: bubble.RevealUnitNetId)));
         }

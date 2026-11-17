@@ -74,6 +74,8 @@ public sealed partial class DuelSession
                 var packet = SurrenderPackets.Status(voter.Team, SurrenderStatus.Agreed, vote.Yes, vote.No);
                 foreach (var seat in _participants.Where(seat => !seat.IsBot && seat.Spawned && seat.Ready))
                     output.AddRange(ToParticipant(seat, [packet]));
+                // Batch 847: the agreed surrender goes to every seat, so to the spectator too; the votes and a failed ballot stay the team's.
+                Spectator?.Record(packet);
                 _surrenderVotes.Clear();
             }
         }

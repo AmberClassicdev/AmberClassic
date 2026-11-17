@@ -110,19 +110,22 @@ public sealed class ProtocolReplicationServices : IReplicationServices
         var maxHealth = ToFloat(entity.MaxHealth);
         // The 0xB5 writes the client's mHP too; a guardian's goes out as 0 (batch 516, ClientReplicationStore.WithoutHealth).
         var health = ToFloat(entity.Health);
+        // Batch 847: a player's reveal marks the unit seen by the player's own team (its client ignores the mask); the spectator's masks are
+        // both teams' and come from ReplicationDelivery.SyncTeamMasks, so its reveal carries none.
+        PlaintextPacket[] teamSight = observer.Spectator ? [] : [VisionPackets.EnterTeamVisibility(entity.NetId, (byte)observer.Team)];
         var isShrine = VisibilityRules.IsShrine(entity);
         if (isShrine)
         {
-            return new PlaintextPacket[]
-            {
+            return
+            [
                 VisionPackets.EnterVisibilityClient(
                     entity.NetId, entity.Name, 0, maxHealth, health,
                     entity.Position, entity.Facing, isHero: false),
-                VisionPackets.EnterTeamVisibility(entity.NetId, (byte)observer.Team),
+                .. teamSight,
                 CombatPackets.TurretProtectionFlags(entity.NetId,
                     CombatPackets.SFlagNontargetableAll, _nextSyncId(entity.NetId),
                     invulnerable: 1u, targetable: 0u),
-            };
+            ];
         }
 
         var isStructure = entity.Kind is EntityKind.Inhibitor or EntityKind.Nexus ||
@@ -130,11 +133,7 @@ public sealed class ProtocolReplicationServices : IReplicationServices
         var isTurret = entity.IsSceneTurret;
         if (isStructure)
         {
-            return new PlaintextPacket[]
-            {
-                VisionPackets.EnterLocalVisibility(entity.NetId, maxHealth, health),
-                VisionPackets.EnterTeamVisibility(entity.NetId, (byte)observer.Team),
-            };
+            return [VisionPackets.EnterLocalVisibility(entity.NetId, maxHealth, health), .. teamSight];
         }
 
         var isHero = entity.UnitType == UnitType.Hero && entity.OwnerNetId == 0;
@@ -170,7 +169,7 @@ public sealed class ProtocolReplicationServices : IReplicationServices
             }
         }
         if (isTurret)
-            packets.Add(VisionPackets.EnterTeamVisibility(entity.NetId, (byte)observer.Team));
+            packets.AddRange(teamSight);
         if (isTurret)
             packets.Add(CombatPackets.TurretProtectionFlags(
                 entity.NetId,
@@ -298,7 +297,7 @@ public sealed class ProtocolReplicationServices : IReplicationServices
         return new[]
         {
             SpawnPackets.AddUnitPerceptionBubble(
-                entity.NetId, radius, 1.0e9f, bubbleId, (uint)observer.Team),
+                entity.NetId, radius, 1.0e9f, bubbleId, (uint)entity.Team),
         };
     }
 
@@ -310,11 +309,9 @@ public sealed class ProtocolReplicationServices : IReplicationServices
     {
         if (entity.IsSceneTurret || entity.UnitType == UnitType.Structure ||
             entity.Kind is EntityKind.Inhibitor or EntityKind.Nexus)
-            return new PlaintextPacket[]
-            {
-                VisionPackets.LeaveLocalVisibility(entity.NetId),
-                VisionPackets.LeaveTeamVisibility(entity.NetId, (byte)observer.Team),
-            };
+            return observer.Spectator
+                ? [VisionPackets.LeaveLocalVisibility(entity.NetId)]
+                : [VisionPackets.LeaveLocalVisibility(entity.NetId), VisionPackets.LeaveTeamVisibility(entity.NetId, (byte)observer.Team)];
         return VisionPackets.LeaveVisibility(entity.NetId);
     }
 

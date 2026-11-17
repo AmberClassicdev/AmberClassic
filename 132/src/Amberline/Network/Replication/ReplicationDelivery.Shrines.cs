@@ -23,7 +23,9 @@ public sealed partial class ReplicationDelivery
         RefreshManagedBallProjections();
         _preparedShrines.Clear();
 
-        var active = _observers.Where(observer => observer.Ready).ToArray();
+        // Batch 847: not the spectator. Each team sees its own shrine, so the union view always holds both, and this phase would write the
+        // shrine's attack target from a view that is no team's.
+        var active = _observers.Where(observer => observer.Ready && !observer.Spectator).ToArray();
         foreach (var observer in active)
         {
             var providers = VisibilityRules.BuildTeamProviders(

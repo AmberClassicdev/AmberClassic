@@ -47,6 +47,8 @@ public static class AirRemoteTunnel
     public const string Path = "/air/rtmp";
     public const string ChatPath = "/air/xmpp";
     public const string SignInPath = "/air/remote-token";
+    /// <summary>NOT RETAIL (batch 853): the friends' spectator requests, <c>/air/spectate/observer-mode/rest/consumer/...</c> (<see cref="MapSpectate"/>).</summary>
+    public const string SpectatePath = "/air/spectate";
     private const int MaxConnections = 32;
     // NOT RETAIL: security addition (retail has no tunnel). A companion holds one RTMP and one XMPP tunnel; four per account
     // leave room for a reconnect that overlaps the old pair, so one token cannot take all 32 shared slots.
@@ -83,6 +85,8 @@ public static class AirRemoteTunnel
         // NOT RETAIL (batch 806): the champion detail page's store routes (batch 800), public on the friends' port. A GET reaches routing:
         // 1.52's platform has only the POST routes (405), 1.0.0.126's has none (404); no handler runs either way.
         IsChampionDetailStorePath(path) ||
+        // NOT RETAIL (batch 853): the friends' spectator requests; MapSpectate asks for the bearer and the grid for a spectator of that game.
+        path.StartsWith(SpectatePath + "/", StringComparison.Ordinal) ||
         path.StartsWith("/status/", StringComparison.Ordinal) || path.StartsWith("/rss/", StringComparison.Ordinal) ||
         path.StartsWith("/store/", StringComparison.Ordinal) || path.StartsWith("/img/", StringComparison.Ordinal);
 
@@ -149,6 +153,31 @@ public static class AirRemoteTunnel
     }
 
     private sealed record SignInRequest(string? Username, string? Password);
+
+    /// <summary>
+    /// NOT RETAIL (batch 853, spectating S4b): retail's spectator client downloaded from the publisher's public spectator service. Here the
+    /// grid is on the host's loopback (<see cref="SpectatorGrid"/>), and a friend's stock client asks its own 127.0.0.1:8088, fixed in the
+    /// client, where the friend's player tool listens and carries each request here over the pinned HTTPS port, as it carries AIR's own
+    /// requests. One GET per request: the account's bearer (as for the tunnels: 401 without a live one, failures throttled per address),
+    /// then the grid's answer for that account, which only that game's spectators get (<see cref="SpectatorGrid.MayWatch"/>: 403 otherwise,
+    /// never counted as a failed sign-in). The game id and the literal <c>token</c> are the client's own path; no secret is in it.
+    /// </summary>
+    public static void MapSpectate(WebApplication app, AirRemoteAccess access, SpectatorGrid grid)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(access);
+        ArgumentNullException.ThrowIfNull(grid);
+        app.Map(SpectatePath, branch => branch.Run(async context =>
+        {
+            if (!context.Request.IsHttps || !HttpMethods.IsGet(context.Request.Method)) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
+            if (AuthorizeTunnel(context, access) is not long account) return;
+            var (status, type, body) = grid.Answer(context.Request.Path.Value ?? "", account);
+            context.Response.StatusCode = status;
+            context.Response.ContentType = type;
+            context.Response.ContentLength = body.Length;
+            await context.Response.Body.WriteAsync(body, context.RequestAborted);
+        }));
+    }
 
     /// <summary>
     /// Use this for requests arriving on the remote TLS listener: it accepts only an HTTPS request whose

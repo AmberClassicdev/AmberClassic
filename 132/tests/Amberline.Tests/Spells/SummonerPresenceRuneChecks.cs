@@ -162,6 +162,108 @@ public static partial class ChampionLiveRegressionChecks
             "an explicit 0 bonus sets nothing in the Exhaust script");
     }
 
+    /// <summary>
+    /// Batch 841 (batch 834 F1): Smite and Clairvoyance on 1.0.0.132. Their inibins keep 126's cooldowns (75, 55) and nothing reads them: the
+    /// cast's AdjustCooldown says 70, and 70 x (1 - SummonerCooldownBonus) under Mastermind (463, 0.15). Its <c>BBIf</c> takes the multiplier
+    /// branch with no mastery too, because an unwritten AvatarVars entry is nil and nil is not 0. The stored cooldown and the HUD's 0x8B
+    /// (summoner bit) carry it. The 132 tooltips read <c>@f2@</c> for the cooldown (fontconfig_en_US: "@f2@ second Cooldown"; 126's read
+    /// the inibin's <c>@Cooldown@</c>), which the script's SpellUpdateTooltip writes with the same literal and branch; the server runs that hook
+    /// and sends the row as a 0x84 entry of selector 0x78 + slot, the summoner book (SpellPackets.SummonerTooltipSlot).
+    /// </summary>
+    [Check("spells-live-p132-smite-and-clairvoyance-cooldown-and-tooltip-with-and-without-mastermind")]
+    public static void SmiteAndClairvoyanceCooldownAndTooltipFollowTheirScripts()
+    {
+        foreach (var spell in new[] { "SummonerSmite", "SummonerClairvoyance" })
+        foreach (var (masteries, expected, label) in new (MasteryPage?, double, string)[]
+                 { (null, 70.0, "no page"), (PresencePage(preservation: false), 70.0 * 0.85, "Mastermind") })
+        {
+            using var match = new Match("Annie", Team.Order);
+            var hero = match.Hero(0);
+            // The other of the two in the second slot: its row is the summoner book's slot 1 (selector 0x79); both write the cooldown at @f2@.
+            hero.SummonerSpells[0] = spell;
+            hero.SummonerSpells[1] = spell == "SummonerSmite" ? "SummonerClairvoyance" : "SummonerSmite";
+            hero.SummonerCooldowns[0] = 0.0;
+            if (masteries is not null) hero.Masteries = masteries;
+            match.Runtime.HeroStats.Refresh(hero);
+            match.Clear();
+            match.Runtime.Tick(1.05);
+            match.Runtime.Delivery.Flush();
+
+            for (var slot = 0; slot < 2; slot++)
+            {
+                var selector = 0x78 + slot;
+                TestAssert.True(hero.ScriptSpellTooltips.TryGetValue(SpellPackets.SummonerTooltipSlot + slot, out var row),
+                    $"{spell}, {label}: SpellUpdateTooltip wrote summoner slot {slot}'s row");
+                TestAssert.Near(expected, row![1], 1e-3, $"{spell}, {label}: slot {slot}'s @f2@ cooldown");
+                var wire = match.Captures[0].Packets.Where(packet => Opcode(packet) == 0x84).SelectMany(packet =>
+                {
+                    var bytes = packet.Plaintext.ToArray();
+                    var count = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(5));
+                    return Enumerable.Range(0, count).Select(index => 7 + 17 * index)
+                        .Where(offset => ReadUInt32(packet, offset) == hero.NetId && bytes[offset + 4] == selector)
+                        .Select(offset => BinaryPrimitives.ReadSingleLittleEndian(bytes.AsSpan(offset + 9)));
+                }).ToArray();
+                TestAssert.True(wire.Length > 0 && Math.Abs(wire[^1] - expected) < 1e-3,
+                    $"{spell}, {label}: the 0x84 row of selector 0x{selector:X2} carries f2 {expected} (got {string.Join(",", wire)})");
+            }
+
+            var target = hero;
+            if (spell == "SummonerSmite")
+            {
+                target = new Entity(match.Runtime.World.Allocate(UnitType.Monster), EntityKind.Neutral, UnitType.Monster, Team.Neutral,
+                    hero.Position + new Position2(0, 300))
+                {
+                    Name = "Wraith", Alive = true, Created = true, Visible = true, MaxHealth = 3000, Health = 3000, Radius = 35,
+                };
+                match.Runtime.World.Register(target);
+                foreach (var seat in match.Runtime.Session.Participants)
+                {
+                    seat.View.Known.Add(target.NetId);
+                    seat.View.Visible.Add(target.NetId);
+                }
+            }
+            match.Clear();
+            match.Cast(0, 0, target, summoner: true);
+            var hud = match.Captures[0].Packets.Where(packet => packet.Plaintext.Length == 10 &&
+                    Opcode(packet) == 0x8B && ReadUInt32(packet, 1) == hero.NetId && packet.Plaintext.Span[5] == 0x80)
+                .Select(packet => BinaryPrimitives.ReadSingleLittleEndian(packet.Plaintext.Span[6..])).ToArray();
+            TestAssert.Near(expected, hero.SummonerCooldowns[0], 1e-6, $"{spell}, {label}: the cast's cooldown");
+            TestAssert.Equal(1, hud.Length, $"{spell}, {label}: one HUD cooldown packet");
+            TestAssert.Near(expected, hud[0], 1e-3, $"{spell}, {label}: the HUD cooldown");
+            TestAssert.Equal(0, match.Runtime.Spells.SummonerScripts!.ScriptFailures.Count, $"{spell}, {label}: no summoner script failed");
+        }
+    }
+
+    /// <summary>
+    /// Batch 841: every 1.0.0.132 summoner script with a SpellUpdateTooltip (14 of them; 126 has none) runs it in a live match without a
+    /// script failure and writes the hero's summoner row, whose cooldown entry (the index the script writes its <c>BaseCooldown</c> to) is
+    /// the script's own AdjustCooldown answer.
+    /// </summary>
+    [Check("spells-live-p132-every-summoner-tooltip-runs-without-failure")]
+    public static void EverySummonerTooltipRunsWithoutFailure()
+    {
+        var withHook = new Amberline.Simulation.Spells.Bb.BbSummonerModule().ScriptNames
+            .Where(name => BbScriptLoader.Load(GameDataPaths.Default, $"Spells/{name}.luaobj").Script?.Event("SpellUpdateTooltip") is not null)
+            .ToArray();
+        TestAssert.Equal(14, withHook.Length, "summoner scripts with SpellUpdateTooltip: " + string.Join(",", withHook));
+        foreach (var spell in withHook)
+        {
+            using var match = new Match("Annie", Team.Order);
+            var hero = match.Hero(0);
+            hero.SummonerSpells[0] = spell;
+            match.Runtime.Tick(1.05);
+            var module = match.Runtime.Spells.SummonerScripts!;
+            TestAssert.Equal("", string.Join(" | ", module.ScriptFailures.Select(failure => failure.Message)), $"{spell}: no script failure");
+            TestAssert.True(hero.ScriptSpellTooltips.ContainsKey(SpellPackets.SummonerTooltipSlot), $"{spell}: the summoner row is written");
+            var binding = module.Binding(hero, 0, match.Runtime.Spells.LoadoutHooks!.OwnerFor(hero)!)!;
+            var index = (int)binding.Script.Event("SpellUpdateTooltip")!.Blocks.SelectMany(BbM3.Flatten)
+                .First(block => block.Function == "BBSetSpellToolTipVar" && block.Text("ValueVar") == "BaseCooldown").Number("Index")!.Value;
+            var cooldown = module.Router!.RunAdjustCooldown(binding.Script, hero, 0, binding.Rank, binding);
+            TestAssert.Near(cooldown ?? double.NaN, hero.ScriptSpellTooltips[SpellPackets.SummonerTooltipSlot][index - 1], 1e-3,
+                $"{spell}: the tooltip's cooldown (@f{index}@) is the cast's");
+        }
+    }
+
     [Check("data.summoner-scripts-rune-5378-readers")]
     public static void OnlyExhaustAndReviveReadTheUnsetPresenceRuneFlag()
     {

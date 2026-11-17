@@ -3,6 +3,7 @@ using Amberline.Core;
 using Amberline.Data;
 using Amberline.Host;
 using Amberline.Network.Sessions;
+using Amberline.Network.Spectator;
 using Amberline.Server;
 using RtmpSharp.IO;
 
@@ -10,8 +11,10 @@ namespace Amberline.Platform;
 
 /// <param name="reportedGameAddress">NOT RETAIL: the game address an account's remote player tool reported
 /// (<see cref="PlatformSessions.ReportedGameAddress"/>), or null to keep <paramref name="advertisedHost"/>.</param>
+/// <param name="spectatorGrid">Batch 848: the spectator grid (<see cref="SpectatorGrid"/>) the lobby's spectators download from; null turns
+/// spectating off (custom games are created player-only, as before batch 848).</param>
 public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager manager, string advertisedHost, TimeProvider? clock = null,
-    HostActivity? activity = null, Func<long, System.Net.IPAddress?>? reportedGameAddress = null)
+    HostActivity? activity = null, Func<long, System.Net.IPAddress?>? reportedGameAddress = null, SpectatorGrid? spectatorGrid = null)
 {
     /// <summary>
     /// DIAGNOSTICS: whether a human seat (by account id) may use the playtest cheat commands, asked as each game starts; bot seats never
@@ -41,10 +44,11 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     /// the GameQueueConfig.name the "Searching for Match:" ribbon appends (MatchmakingWaitingStatus.as:650, 1062), <c>GameName</c>
     /// the stem of each game's own name and <c>ConfigId</c> the GameTypeConfig its games pick with (blind pick 1, Draft Mode 2).
     /// <c>Ranked</c>, <c>MinParty</c> and <c>MaxParty</c> are GameQueueConfig.ranked, minimumParticipantListSize and
-    /// maximumParticipantListSize (batch 586, see <see cref="RankedSoloQueueId"/>); MaxParty null is the team size.
+    /// maximumParticipantListSize (batch 586, see <see cref="RankedSoloQueueId"/>); MaxParty null is the team size. <c>TeamOnly</c> is 1.52's
+    /// GameQueueConfig.teamOnly: a Ranked Teams queue, whose party is one named team (batch 844, <see cref="AirLine.RankedTeamQueues"/>).
     /// </summary>
     public sealed record QueueRule(int Id, string Type, string GameType, int MapId, int TeamSize, string Name, string GameName,
-        int ConfigId = AirGameDtos.BlindPickConfigId, bool Ranked = false, int MinParty = 1, int? MaxParty = null)
+        int ConfigId = AirGameDtos.BlindPickConfigId, bool Ranked = false, int MinParty = 1, int? MaxParty = null, bool TeamOnly = false)
     {
         public int PartyLimit => MaxParty ?? TeamSize;
     }
@@ -72,6 +76,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         new(DominionDraftQueueId, DominionQueueType, "NORMAL_GAME", PlatformStoreCalendar.CrystalScarMapId, 5, "Dominion 5v5 Draft",
             "Dominion Draft Game", AirGameDtos.DraftConfigId),
         .. RankedQueues,
+        // Batch 844: the Ranked Teams queues 42 and 41 of a line whose client has the team service (none on 1.0.0.126).
+        .. AirLine.RankedTeamQueues,
     ];
     /// <summary>
     /// Every queue a saved game can name: the offered <see cref="Queues"/> and the retired ones (batch 805, <see cref="RetiredRankedQueues"/>).
@@ -115,6 +121,11 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     /// <summary>The draft's ban turns: the AIR line's (<see cref="AirLine.DraftMaxBans"/>).</summary>
     public const int DraftMaxBans = AirLine.DraftMaxBans;
     private const int QueueCapacity = 100;
+    /// <summary>
+    /// Batch 848: a custom game's spectator slots, the client's <c>spectatorSlotLimit</c> (AirDtos.ClientSystemStates). Retail: four, the
+    /// October 2011 FAQ (wiki Spectator_mode; owner decision, 17 November 2026).
+    /// </summary>
+    public const int SpectatorSlots = 4;
 
     public sealed class Member(PlatformAccount account, Team team)
     {
@@ -194,6 +205,19 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         public int PickTurn = 1;
         /// <summary>The GameDTO's bans, in ban order (draft only). Not <see cref="Banned"/>, which holds kicked accounts.</summary>
         public List<BannedChampion> BannedChampions = [];
+        /// <summary>Batch 844: a Ranked Teams game's two teams by side, as named when it was matched; null for every other game.</summary>
+        public Dictionary<Team, PlatformTeamSide>? RankedTeams;
+        /// <summary>Batch 848: the create box's "Allow Spectators" (<c>ALL</c>), the GameDTO's spectatorsAllowed.</summary>
+        public bool SpectatorsAllowed;
+        /// <summary>
+        /// Batch 848: the spectators, the GameDTO's <c>observers</c>, at most <see cref="SpectatorSlots"/>. Accounts only, never
+        /// <see cref="Members"/>: the roster, the match handoff, rewards, results, leaver rules and draft turns stay the players'.
+        /// </summary>
+        public List<PlatformAccount> Observers = [];
+        /// <summary>Batch 848: the stream's chunk key, made at <see cref="Launch"/> when the game records; never logged or written.</summary>
+        internal string? ChunkKey;
+        /// <summary>Batch 854: when the game started playing (<see cref="StartPlaying"/>): the spectators' start, and the clock of the delay.</summary>
+        internal DateTimeOffset? PlayingSince;
     }
     /// <summary>A draft ban: the champion, the team whose captain banned it and the ban turn (the game's pickTurn when it was made).</summary>
     public readonly record struct BannedChampion(int Champion, Team Team, int Turn);
@@ -211,6 +235,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         public bool ReplySent;
         /// <summary>When the unit may be matched: its join, or later for a LeaverBuster low-priority wait (batch 587).</summary>
         public DateTimeOffset MatchableAt = joined;
+        /// <summary>Batch 844: the named team a Ranked Teams unit plays as (MatchMakerParams.teamId); null in every other queue.</summary>
+        public string? TeamId;
     }
     private readonly object _gate = new();
     private readonly Dictionary<int, Lobby> _lobbies = [];
@@ -272,14 +298,19 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         if (room.Split('~', 2)[0] is not ("ap" or "c1" or "c2" or "pg")) return true;
         lock (_gate)
         {
-            if (FindCurrent(account) is not { } game) return false;
+            // Batch 848: a spectator enters its game's team-select room only. The stock client asks for no champion-select room while it
+            // spectates (ChampionSelectionController: requestChatRoom only when !isSpectating), and the team rooms are the players'.
+            if (FindCurrent(account) is not { } game)
+                return FindObserved(account) is { } watched && room.Equals(ChatRoomName("ap", Shown(watched)), StringComparison.OrdinalIgnoreCase);
             var (prefix, pick, queued) = game.Members.First(m => m.Account.Id == account).Team == Team.Order
                 ? ("c1", "_c1", "_ta") : ("c2", "_c2", "_tb");
-            var shown = game.Name.Length > 50 ? game.Name[..50] + "..." : game.Name;
-            return new[] { ChatRoomName("ap", shown), ChatRoomName(prefix, game.Name + pick), ChatRoomName(prefix, game.Name + queued),
+            return new[] { ChatRoomName("ap", Shown(game)), ChatRoomName(prefix, game.Name + pick), ChatRoomName(prefix, game.Name + queued),
                 ChatRoomName("pg", "endGame" + game.Id) }.Contains(room, StringComparer.OrdinalIgnoreCase);
         }
     }
+
+    /// <summary>The game name as TeamSelectionController shows it (and names its "ap" room after): 50 characters, then "...".</summary>
+    private static string Shown(Lobby game) => game.Name.Length > 50 ? game.Name[..50] + "..." : game.Name;
 
     /// <summary>ChatController.obfuscateChatRoom: the prefix, "~" and the lower-case hex SHA-1 of the lower-cased UTF-8 name.</summary>
     public static string ChatRoomName(string prefix, string name) => prefix + "~" +
@@ -355,14 +386,17 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             foreach (var game in _lobbies.Values.Where(Unfinished))
             {
                 DateTimeOffset? since = game.State is "START_REQUESTED" or "IN_PROGRESS" ? (game.StateSince == default ? game.Created : game.StateSince) : null;
-                foreach (var account in game.Members.Select(member => member.Account.Id).Append(game.Owner)) playing[account] = since;
+                foreach (var account in game.Members.Select(member => member.Account.Id).Append(game.Owner).Concat(game.Observers.Select(o => o.Id)))
+                    playing[account] = since;
             }
             return playing;
         }
     }
 
+    // Batch 848: a spectator is held as a player is, until the game's result.
     private bool Holds(long accountId) => _queue.Any(entry => entry.AccountId == accountId) ||
-        _lobbies.Values.Any(game => Unfinished(game) && (game.Owner == accountId || game.Members.Any(member => member.Account.Id == accountId)));
+        _lobbies.Values.Any(game => Unfinished(game) && (game.Owner == accountId || game.Members.Any(member => member.Account.Id == accountId) ||
+            game.Observers.Any(observer => observer.Id == accountId)));
 
     /// <summary>A lobby, champion select or match whose result is not read yet.</summary>
     private static bool Unfinished(Lobby game) => !IsTerminal(game) && game.Result is null;
@@ -406,8 +440,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     /// <param name="team">MatchMakerParams.team of a party's attachTeamToQueue: the summoner ids of the leader's arranged team, the leader
     /// included (InviteController.getParticipantIDCollection reads them from the members' chat JIDs, "sum" + id). Null or one id: solo.</param>
     /// <param name="invitationId">MatchMakerParams.invitationId: the invitation every member accepted (<see cref="AcceptInvite"/>).</param>
+    /// <param name="teamId">Batch 844: MatchMakerParams.teamId (1.52): the named team a Ranked Teams party plays as (gameQueueManager.rankedTeamId,
+    /// MasterGameViewController.as:670); only a team-only queue reads it.</param>
     public object AttachQueue(PlatformAccount account, string connection, int[] queueIds, string? botDifficulty = null,
-        long[]? team = null, string? invitationId = null)
+        long[]? team = null, string? invitationId = null, string? teamId = null)
     {
         lock (_gate)
         {
@@ -442,8 +478,21 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                 }
             }
             var everyone = members.Select(member => member.Account).Prepend(account).ToArray();
-            var playing = everyone.Where(player => FindCurrent(player.Id) is { Result: null }).ToArray();
+            // Batch 848: a spectator is in a game too.
+            var playing = everyone.Where(player => FindCurrent(player.Id) is { Result: null } || FindObserved(player.Id) is not null).ToArray();
             if (playing.Length != 0) return AirGameDtos.QueueAlreadyInGame(playing);
+            // Batch 844: a Ranked Teams queue takes one named team, its whole side, every player a MEMBER (the stock invite bay offers only the
+            // chosen team's members, RankedTeamInviteBayRules). Reconstruction: a team plays one game at a time, so a second party of the same
+            // team (a nine-player roster holds three of three) waits for the first.
+            if (rule.TeamOnly)
+            {
+                if (teamId is null) return AirGameDtos.QueueFailure(rule.Id, "Choose a ranked team.");
+                if (accounts.TeamPartyRefusal(teamId, everyone.Select(player => player.Id).ToArray(), rule.TeamSize) is { } refusal)
+                    return AirGameDtos.QueueFailure(rule.Id, refusal);
+                if (_queue.Any(entry => entry.TeamId == teamId && everyone.All(player => player.Id != entry.AccountId)) ||
+                    _lobbies.Values.Any(game => game.Result is null && !IsTerminal(game) && game.RankedTeams?.Values.Any(side => side.TeamId == teamId) == true))
+                    return AirGameDtos.QueueFailure(rule.Id, "This team is already in a queue or a game.");
+            }
             var now = _clock.GetUtcNow();
             // Batch 589: a player with a dodge timer keeps the whole unit out of every queue, with the client's own QueueDodger rows
             // ("Because {0} abandoned a recent game during champion selection, your team is unable to join the queue").
@@ -472,12 +521,13 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             // so one penalised member delays the whole party. The client shows it in the ribbon's "Approx" wait, the join reply's
             // QueueInfo.waitTime; the matcher takes the unit only once it is matchable, behind everyone matchable before it.
             var delay = everyone.Max(player => accounts.LeaverStatus(player.Id).QueueDelay);
-            var leader = new QueueEntry(account.Id, connection, now, ++_queueSequence, rule.Id, botSkill) { MatchableAt = now + delay };
+            var unitTeam = rule.TeamOnly ? teamId : null;
+            var leader = new QueueEntry(account.Id, connection, now, ++_queueSequence, rule.Id, botSkill) { MatchableAt = now + delay, TeamId = unitTeam };
             _queue.Add(leader);
             // The leader's reply gates the party (ConfirmQueueReply); the members are told by push, so theirs is already sent.
             foreach (var (member, memberConnection) in members)
                 _queue.Add(new(member.Id, memberConnection, now, ++_queueSequence, rule.Id, botSkill)
-                    { Party = leader.Party, ReplySent = true, MatchableAt = leader.MatchableAt });
+                    { Party = leader.Party, ReplySent = true, MatchableAt = leader.MatchableAt, TeamId = unitTeam });
             var joined = AirGameDtos.SearchingForMatch(QueueInfoObject(rule.Id, delay));
             // The members wait in their arranged-team view (JOIN_QUEUE) and enter the queue on this notification: a pushed
             // SearchingForMatchNotification goes to handleJoinQueue (MasterGameController.onServerGameMessageReceived), which starts their wait.
@@ -501,6 +551,7 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             if (string.IsNullOrWhiteSpace(connection) || (AccountForConnection is not null && AccountForConnection(connection) != account.Id))
                 throw new ArgumentException("The queue connection is not authenticated for this account.");
             if (inviteId.Length is < 1 or > 32 || inviteId.Any(char.IsControl)) throw AirFault.InviteRefused("Invalid invitation.");
+            if (FindObserved(account.Id) is not null) throw AirFault.InviteRefused("Leave your current game first.");
             if (FindCurrent(account.Id) is { } current)
             {
                 if (current.Result is null) throw AirFault.InviteRefused("Leave your current game first.");
@@ -560,10 +611,10 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         var maxSlots = PlatformStoreCalendar.MaxSlotsOf(mapId);
         if (capacity > maxSlots) throw AirFault.TooManySlots(maxSlots);
         if (capacity < 2) throw AirFault.TooFewSlots(2);
-        // Stock AIR hides the spectator checkbox when observerModeEnabled=false,
-        // but its untouched default still sends ALL. Both inputs create a
-        // player-only lobby; the returned DTO always disables spectators.
-        if (spectators is not ("NONE" or "ALL")) throw AirFault.SpectatorsDisabled();
+        // Batch 848: the create box's "Allow Spectators" sends ALL, unticked NONE (CreatePracticeGameController.as:151-158, both AIR lines);
+        // it shows while observerModeEnabled (AirDtos.ClientSystemStates) and is ticked by default (UserPrefs.allowSpectators). A Platform
+        // without a spectator grid creates player-only rooms whatever the box said, as before batch 848.
+        if (spectators is not ("NONE" or "ALL")) throw AirFault.SpectatorsDisabled("Spectator setting refused.");
         lock (_gate)
         {
             RequireFree(account.Id, name.Trim(), joining: false);
@@ -577,7 +628,7 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             // Reconstruction: GameDTO.expiryTime is the milliseconds a lobby has left (PracticeGameManager counts it down and
             // the client has a 'Lobby Expired' dialog), but retail's lobby lifetime is not recoverable; 30 minutes is a guess.
             { Created = _clock.GetUtcNow(), Deadline = _clock.GetUtcNow().AddMinutes(30),
-              MapId = mapId, ConfigId = configId };
+              MapId = mapId, ConfigId = configId, SpectatorsAllowed = spectators == "ALL" && spectatorGrid is not null };
             game.Members.Add(OfferedSeat(new(account, Team.Order) { Joined = _clock.GetUtcNow() }, mapId));
             _lobbies.Add(game.Id, game);
             return AirGameDtos.Game(game);
@@ -603,15 +654,199 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         }
     }
 
+    /// <summary>
+    /// Batch 848: gameService.observeGame(gameId, password), the game browser's Spectate button (JoinGameController.observeGame, its
+    /// password popup for a private game); the answer is the GameDTO, as for joinGame (onJoinGameSuccess). The spectator takes one of the
+    /// <see cref="SpectatorSlots"/>. Refusals are joinGame's: not in team selection PG-0020 (the browser lists only such lobbies, and the
+    /// client's JOIN_GAME state takes no other GameDTO), banned PG-0021, full PG-0009, wrong password PG-0010, already in a game PG-0008;
+    /// a lobby without spectators, or a host whose spectator port is taken, PG-0036. Reconstruction: retail's checks and their order.
+    /// </summary>
+    public object Observe(PlatformAccount account, int id, string password)
+    {
+        lock (_gate)
+        {
+            var game = Find(id);
+            if (game.State == "TEAM_SELECT" && game.Observers.Any(o => o.Id == account.Id)) return AirGameDtos.Game(game);
+            RequireFree(account.Id, game.Name, joining: true);
+            if (game.State != "TEAM_SELECT") throw AirFault.NotJoinable();
+            if (!game.SpectatorsAllowed) throw AirFault.SpectatorsDisabled();
+            if (game.Banned.Contains(account.Id)) throw AirFault.Banned();
+            if (game.Observers.Count >= SpectatorSlots) throw AirFault.IsFull(game.Name);
+            if (!PlatformSessions.SecretEquals(game.Password, password)) throw AirFault.WrongPassword();
+            RequireGrid();
+            game.Observers.Add(account);
+            Changed(game);
+            return AirGameDtos.Game(game);
+        }
+    }
+
+    /// <summary>
+    /// Batch 848: gameService.switchPlayerToObserver(gameId), a player taking a spectator slot in team selection
+    /// (TeamSelectionController.takeSlot). A Boolean, as switchTeams: false runs the client's team-full handler. False for the lobby's last
+    /// player (the stock client offers the slot only while another player is there, updateTeamSlots) and when the four slots are taken.
+    /// Reconstruction: the owner who becomes a spectator hands the lobby to the first player, since only a player can start it and the
+    /// client reads the owner from ownerSummary, a player (MasterGameController.as:1131, 1265).
+    /// </summary>
+    public bool SwitchToObserver(long account, int id)
+    {
+        lock (_gate)
+        {
+            var game = RequireMember(account, id);
+            if (game.IsMatchmade) throw new ArgumentException("Queue games have no spectators.");
+            if (game.State != "TEAM_SELECT") throw AirFault.TeamsLocked();
+            if (!game.SpectatorsAllowed) throw AirFault.SpectatorsDisabled();
+            if (game.Members.Count == 1 || game.Observers.Count >= SpectatorSlots) return false;
+            RequireGrid();
+            var member = MemberFor(game, account);
+            game.Members.Remove(member);
+            game.Observers.Add(member.Account);
+            if (game.Owner == account) game.Owner = game.Members[0].Account.Id;
+            Changed(game);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Batch 848: gameService.switchObserverToPlayer(gameId, teamId), a spectator taking a player slot of team 100 (blue, Order) or 200
+    /// (purple, Chaos) (TeamSelectionController.switchObserverToTeam). A Boolean: false when the game or that team is full.
+    /// </summary>
+    public bool SwitchToPlayer(long account, int id, int teamId)
+    {
+        lock (_gate)
+        {
+            var game = Find(id);
+            var observer = game.Observers.FirstOrDefault(o => o.Id == account) ?? throw AirFault.NoGame();
+            if (game.State != "TEAM_SELECT") throw AirFault.TeamsLocked();
+            var team = teamId switch { 100 => Team.Order, 200 => Team.Chaos, _ => throw new ArgumentException("Invalid team.") };
+            if (game.Members.Count + game.Bots.Count >= game.Capacity || TeamCount(game, team) >= TeamLimit(game)) return false;
+            game.Observers.Remove(observer);
+            game.Members.Add(OfferedSeat(new(accounts.Get(account), team) { Joined = _clock.GetUtcNow() }, game.MapId));
+            Changed(game);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Batch 848: gameService.banObserverFromGame(gameId, accountId), the owner removing a spectator in team selection
+    /// (TeamSelectionController.banObserverFromGame; the answer is not read). As banUserFromGame (<see cref="Kick"/>): banned from the
+    /// game, told with PLAYER_BANNED_FROM_GAME. Retail: "the host ... can kick or ban them before the start" (October 2011 FAQ).
+    /// </summary>
+    public void BanObserver(long owner, int id, long targetAccount)
+    {
+        lock (_gate)
+        {
+            var game = RequireMember(owner, id);
+            if (game.Owner != owner || game.State != "TEAM_SELECT") throw new ArgumentException("Only the owner can remove a spectator.");
+            var observer = game.Observers.FirstOrDefault(o => o.Id == targetAccount) ?? throw new ArgumentException("That spectator is not in the game.");
+            game.Observers.Remove(observer);
+            game.Banned.Add(targetAccount);
+            Changed(game);
+            Push(targetAccount, AirWire.Object(AirProtocolNames.GameNotification,
+                ("type", "PLAYER_BANNED_FROM_GAME"), ("messageCode", ""), ("messageArgument", "")));
+        }
+    }
+
+    /// <summary>
+    /// Batch 848: a spectator leaves: quitGame from team or champion selection (<see cref="Quit"/>), or gameService.declineObserverReconnect,
+    /// the in-game view's "Quit Spectating" (InGameController.stopSpectating, which goes home whatever the answer). Once the game is
+    /// launched the others are not pushed: the list matters only to the lobby and champion-select views.
+    /// Batch 854: from every game it spectates, a finished one whose delayed stream still plays included, so a declined reconnect
+    /// (<see cref="SpectatorReconnect"/>) is not offered again and the grid serves that account no more of it.
+    /// </summary>
+    public void StopSpectating(long account)
+    {
+        lock (_gate)
+            foreach (var game in _lobbies.Values)
+                if (game.Observers.RemoveAll(o => o.Id == account) > 0 && game.HostId is null && !IsTerminal(game)) Changed(game);
+    }
+
+    // The spectator grid must listen (it binds 8088 at the first spectator); otherwise spectating is off here (PG-0036).
+    private void RequireGrid()
+    {
+        if (spectatorGrid?.Listen() != true) throw AirFault.SpectatorsDisabled();
+    }
+
+    /// <summary>
+    /// Batch 853 (spectating S4b): the grid's access rule (<see cref="SpectatorGrid.MayWatch"/>): a game's stream goes only to its own
+    /// spectators, whatever its lobby's state (the stream runs the delay past the result). Through the friends' tunnel the signed-in account
+    /// (<paramref name="tunnelAccount"/>) must be one of them; a request made on this PC (null) needs one of them signed in to this Platform
+    /// from this PC (<paramref name="signedInHere"/>, the sessions' <c>IsLocalAccount</c>), so a player on the host PC cannot read the game
+    /// they play. NOT RETAIL: a security addition (retail's spectator service asked for no account).
+    /// </summary>
+    public bool MaySpectate(long gameId, long? tunnelAccount, Func<long, bool> signedInHere) => Viewer(gameId, tunnelAccount, signedInHere) is not null;
+
+    /// <summary>Batch 854: the spectator a grid request is for, by <see cref="MaySpectate"/>'s rule (on this PC: the first of the game's spectators signed in here); null when none.</summary>
+    private long? Viewer(long gameId, long? tunnelAccount, Func<long, bool> signedInHere)
+    {
+        long[] spectators;
+        lock (_gate)
+            spectators = gameId is > 0 and <= int.MaxValue && _lobbies.GetValueOrDefault((int)gameId) is { } game
+                ? [.. game.Observers.Select(observer => observer.Id)] : [];
+        // Asked outside the lock: the rule reads the sessions.
+        if (tunnelAccount is { } account) return spectators.Contains(account) ? account : null;
+        foreach (var spectator in spectators) if (signedInHere(spectator)) return spectator;
+        return null;
+    }
+
+    /// <summary>
+    /// Batch 854 (spectating S5): the grid's answer to AIR 1.52's end-of-game request (<see cref="SpectatorGrid.EndOfGameStats"/>;
+    /// SpectatorController.retrieveEndOfGameStats, which EndOfGameStatsController.activate runs for a drop-in spectator once its client has
+    /// ended): the game's result for the spectator the request is for (<see cref="Viewer"/>), a base64 AMF3 SpectatorEndOfGameStats
+    /// (<see cref="AirGameDtos.SpectatorResults"/>); null without a result, a spectator, or on a line without the drop-in.
+    /// </summary>
+    public string? SpectatorEndOfGame(long gameId, long? tunnelAccount, Func<long, bool> signedInHere)
+    {
+        if (!AirLine.SpectatorDropIn || Viewer(gameId, tunnelAccount, signedInHere) is not { } viewer) return null;
+        lock (_gate)
+            return _lobbies.GetValueOrDefault((int)gameId) is { Result: not null } game && accounts.Find(viewer) is { } account
+                ? AirGameDtos.Amf3Base64(AirGameDtos.SpectatorResults(game, account, _clock.GetUtcNow(), accounts.EconomyRules)) : null;
+    }
+
+    /// <summary>
+    /// Batch 854 (spectating S5): AIR 1.52's drop-in from the friends list, gameService.retrieveInProgressSpectatorGameInfo(summonerName)
+    /// (BuddyListTreeRenderer.spectateGame, SpectatorController.spectateSummoner). The menu item is enabled by canDropInSpectate
+    /// (SpectatorController.as:299-307): the friend in game, observerModeEnabled, and for a custom game (queue type NONE)
+    /// observableCustomGameModes ALL or DROPINONLY and the friend's presence isObservable, which the friend's own client publishes from the
+    /// GameDTO's spectatorsAllowed (PresenceController.setGameStatus). The answer is a GameReconnectInfoDTO: the GameDTO with the caller among
+    /// its observers (shown as in progress), the caller's spectator start, and reconnectDelay, the seconds AIR waits before it starts the
+    /// client (onSpectateGameInProgressSuccess, MasterGameController.reconnectToGame): what is left of the spectator delay since the game
+    /// started playing, so the first game chunk is out when the client asks (a client started earlier gives up, design 845 B3), 0 once it has
+    /// passed (the client then plays the stream from the start, fast-forwarding, until keyframes exist). Any refusal is PG-0036: AIR shows
+    /// SPECTATING_DISABLED for every error (onSpectateGameInProgressError). Custom games only (owner, 17 November 2026).
+    /// Reconstruction: the refusals: a running custom game that allows spectators and records, without a password (the friends list asks for
+    /// none), a free slot of the four, not banned from it, not playing in a game (a player of that game would see both teams). The caller
+    /// leaves any other game it spectated. Asking again for the same game answers again without a second slot.
+    /// </summary>
+    public object DropIn(PlatformAccount caller, string summonerName)
+    {
+        lock (_gate)
+        {
+            if (accounts.FindName(summonerName) is not { } friend || FindCurrent(friend.Id) is not
+                { IsMatchmade: false, SpectatorsAllowed: true, Result: null, ChunkKey: { } chunkKey, PlayingSince: { } playing } game ||
+                game.Password.Length > 0)
+                throw AirFault.SpectatorsDisabled();
+            if (!game.Observers.Any(o => o.Id == caller.Id))
+            {
+                RequireFree(caller.Id, game.Name, joining: true);
+                if (game.Banned.Contains(caller.Id) || game.Observers.Count >= SpectatorSlots) throw AirFault.SpectatorsDisabled();
+                foreach (var other in _lobbies.Values) other.Observers.RemoveAll(o => o.Id == caller.Id);
+                game.Observers.Add(caller);
+            }
+            var delay = (int)Math.Ceiling(Math.Max(0, (playing + SpectatorGrid.Delay - _clock.GetUtcNow()).TotalSeconds));
+            return AirWire.Object(AirProtocolNames.GameReconnectInfoDTO, ("game", AirGameDtos.Game(game, "IN_PROGRESS")),
+                ("playerCredentials", AirGameDtos.ObserverCredentials(game.Id, chunkKey)), ("reconnectDelay", delay));
+        }
+    }
+
     public object? Current(long account)
     {
-        lock (_gate) return FindCurrent(account) is { } game ? AirGameDtos.Game(game) : null;
+        lock (_gate) return (FindCurrent(account) ?? FindObserved(account)) is { } game ? AirGameDtos.Game(game) : null;
     }
 
     public object? Latest(long account, int id)
     {
         lock (_gate)
-            return _lobbies.GetValueOrDefault(id) is { } game && game.Members.Any(m => m.Account.Id == account)
+            return _lobbies.GetValueOrDefault(id) is { } game && (game.Members.Any(m => m.Account.Id == account) || game.Observers.Any(o => o.Id == account))
                 ? AirGameDtos.Game(game) : null;
     }
 
@@ -620,7 +855,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         lock (_gate)
         {
             var game = Find(id);
-            if (!game.Members.Any(m => m.Account.Id == account) && game.State != "TEAM_SELECT") throw AirFault.NoGame();
+            if (!game.Members.Any(m => m.Account.Id == account) && !game.Observers.Any(o => o.Id == account) && game.State != "TEAM_SELECT")
+                throw AirFault.NoGame();
             return AirGameDtos.Game(game);
         }
     }
@@ -1007,7 +1243,7 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         lock (_gate)
         {
             var game = FindCurrent(account);
-            if (game is null) return;
+            if (game is null) { StopSpectating(account); return; }
             if (game.Result is not null) { ReturnFromResults(game, account); return; }
             if (game.HostId is not null && game.Result is null) throw new ArgumentException("This match is in progress; reconnect to return.");
             if (game.State != "TEAM_SELECT")
@@ -1015,9 +1251,20 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                 DropFromSelection(game, [MemberFor(game, account)], notifyLeavers: false);
                 return;
             }
+            if (game.Members.Count == 1)
+            {
+                // Batch 848: the last player leaves, and the lobby closes as TERMINATED with LAST_PLAYER_LEFT, which shows its spectators
+                // practiceGame_gameLobbyVacated, "At least one non-spectating player is required to keep a game lobby active"
+                // (MasterGameController, TEAM_SELECTION: showCustomGameLobbyVacatedDialog). Their DTO still lists the player, since the client
+                // reads ownerSummary.accountId on every team-select DTO (MasterGameController.as:1131); the leaver asked and is not pushed.
+                game.State = "TERMINATED";
+                game.TerminatedCondition = "LAST_PLAYER_LEFT";
+                Changed(game, pushMembers: false);
+                game.Members.Clear();
+                return;
+            }
             game.Members.RemoveAll(m => m.Account.Id == account);
-            if (game.Members.Count == 0) game.State = "TERMINATED";
-            else if (game.Owner == account) game.Owner = game.Members[0].Account.Id;
+            if (game.Owner == account) game.Owner = game.Members[0].Account.Id;
             Changed(game);
         }
     }
@@ -1078,11 +1325,30 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         lock (_gate)
         {
             var game = FindCurrent(account);
-            if (game is null || game.HostId is null || game.Result is not null || !game.CredentialsSent) return null;
+            if (game is null) return SpectatorReconnect(account);
+            if (game.HostId is null || game.Result is not null || !game.CredentialsSent) return null;
             return AirWire.Object(AirProtocolNames.GameReconnectInfoDTO, ("game", AirGameDtos.Game(game)),
                 ("playerCredentials", Credentials(game, MemberFor(game, account))));
         }
     }
+
+    /// <summary>
+    /// Batch 854 (spectating S5): a spectator's reconnect, both AIR lines: retrieveInProgressGameInfo, from the login packet's reconnectInfo
+    /// (ApplicationController.handleLoginDataPacket opens the spectator's disconnected view, PLAYING_SPECTATOR_DISCONNECT, when the GameDTO
+    /// lists it among the observers) and from that view's Reconnect (InGameController.reconnectToGame, MasterGameController.reconnectToGame
+    /// with delay 0: SpectatorController.spectateGame starts the client at once). The answer is the GameDTO, shown as still in progress
+    /// (for the spectator it is, the delay behind), and the spectator's start again, for the launched game it spectates whose stream still
+    /// plays (<see cref="SpectatorGrid.Streaming"/>: up to the delay past the result). Not for a game that failed or was aborted. The newest
+    /// such game, if there are several. No reconnectDelay: AIR 1.45's GameReconnectionInfo has no such field and both lines pass 0 here.
+    /// Reconstruction: retail's rule for a spectator's reconnect.
+    /// </summary>
+    private AsObject? SpectatorReconnect(long account) =>
+        _lobbies.Values.Where(g => g is { ChunkKey: not null, PlayingSince: not null } && g.State is not ("FAILED_TO_START" or "TERMINATED_IN_ERROR") &&
+                g.Observers.Any(o => o.Id == account) && spectatorGrid?.Streaming(g.Id) == true)
+            .MaxBy(g => g.PlayingSince) is { } watched
+            ? AirWire.Object(AirProtocolNames.GameReconnectInfoDTO, ("game", AirGameDtos.Game(watched, "IN_PROGRESS")),
+                ("playerCredentials", AirGameDtos.ObserverCredentials(watched.Id, watched.ChunkKey!)))
+            : null;
 
     public void SaveLoadout(long account, Func<PlatformAccount, MatchPlayer> update)
     {
@@ -1249,7 +1515,7 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                             Push(member.Account.Id, AirGameDtos.Results(game, member,
                                 receipt?.Rewards?.GetValueOrDefault(member.Account.Id), accounts.EconomyRules,
                                 account => AirProfileDtos.Record(account, accounts.ResultsFor(account.Id), game.Queue?.Type), _clock.GetUtcNow(),
-                                receipt?.Ratings?.GetValueOrDefault(member.Account.Id)));
+                                receipt?.Ratings?.GetValueOrDefault(member.Account.Id), TeamResult(game, member, receipt?.Teams)));
                             Push(member.Account.Id, AirDtos.AccountBalanceNotification(member.Account, accounts.Controls.PaidContentOff));
                             // The stock post-game refresh reloads summoner data,
                             // not boost inventory. Replace remaining win counts.
@@ -1367,7 +1633,7 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     private void PurgeQueue()
     {
         foreach (var entry in _queue.Where(entry => (AccountForConnection is not null && AccountForConnection(entry.Connection) != entry.AccountId) ||
-                     FindCurrent(entry.AccountId) is not null).ToArray())
+                     FindCurrent(entry.AccountId) is not null || FindObserved(entry.AccountId) is not null).ToArray())
             if (_queue.Contains(entry)) LeaveQueue(entry);
     }
 
@@ -1457,6 +1723,13 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         for (var side = 0; side < teams.Length; side++)
             foreach (var entry in teams[side])
                 game.Members.Add(OfferedSeat(new(accounts.Get(entry.AccountId), side == 0 ? Team.Order : Team.Chaos) { Joined = now }, rule.MapId));
+        // Batch 844: a Ranked Teams game keeps its two teams as named now, for the handoff, the result and the end-of-game screen.
+        if (rule.TeamOnly && teams.Select(side => side[0].TeamId is { } id ? accounts.FindTeam(id) : null).ToArray() is [{ } order, { } chaos])
+            game.RankedTeams = new()
+            {
+                [Team.Order] = new(order.Id, order.Name, order.Tag),
+                [Team.Chaos] = new(chaos.Id, chaos.Name, chaos.Tag),
+            };
         if (coop)
         {
             Random.Shared.Shuffle(pool);
@@ -1472,6 +1745,15 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         _queue.RemoveAll(entry => picked.Contains(entry));
         Changed(game);
     }
+
+    /// <summary>Batch 844: in a rated Ranked Teams game, the member's side and the other, and whether the member's team is now ranked in the
+    /// game's queue (<see cref="PlatformAccounts.RankedTeamGames"/> games of it); null for every other game.</summary>
+    private (PlatformTeamSide Mine, PlatformTeamSide Other, bool Ranked)? TeamResult(Lobby game, Member member,
+        Dictionary<string, PlatformTeamSide>? sides) =>
+        sides is not null && sides.TryGetValue(member.Team.ToString(), out var mine) &&
+        sides.FirstOrDefault(side => side.Key != member.Team.ToString()).Value is { } other
+            ? (mine, other, accounts.TeamGames(mine.TeamId).Count(played => played.QueueType == game.Queue?.Type) >= PlatformAccounts.RankedTeamGames)
+            : null;
 
     private void Launch(Lobby game)
     {
@@ -1509,9 +1791,19 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         // before the switch went off and a bot's alike, plays the default look; retail played the chosen skin. The saved loadout keeps its skin.
         var skinsOff = accounts.Controls.PaidContentOff;
         var players = humans.Concat(bots).Select(player => skinsOff ? player with { SkinId = 0 } : player).ToArray();
+        // Batch 848 (spectating S3): a game with a spectator records its stream: a new chunk key, which the game server gets with
+        // --spectator-stream <its folder>/spectator (GameManager), and the folder registered with the grid under AIR's game id. The roster
+        // and the handoff stay the players'. A game without a spectator records nothing (the brief: recording costs a view per tick and disk),
+        // except where AIR drops in from the friends list (batch 854, AirLine.SpectatorDropIn, 1.0.0.132): there a custom game that allows
+        // spectators records from the launch, so a friend can spectate it later.
+        var chunkKey = game.SpectatorsAllowed && (game.Observers.Count != 0 || AirLine.SpectatorDropIn) && spectatorGrid?.Listen() == true
+            ? SpectatorChunk.NewChunkKey() : null;
         var host = manager.CreateReserved(Guest(accounts.Get(game.Owner)), new(game.RequestId, players, game.MapId, game.Mode),
             game.Members.Select(m => Guest(m.Account)).ToArray(),
-            id => accounts.PrepareMatch(new(game.Id, id, game.QueueId, game.Members.Select(m => m.Account.Id).ToArray(), players)));
+            id => accounts.PrepareMatch(new(game.Id, id, game.QueueId, game.Members.Select(m => m.Account.Id).ToArray(), players,
+                game.RankedTeams?.ToDictionary(side => side.Key.ToString(), side => side.Value))), chunkKey);
+        if (chunkKey is not null) spectatorGrid!.Add(game.Id, manager.SpectatorFolder(host.Id));
+        game.ChunkKey = chunkKey;
         game.HostId = host.Id;
         game.Launched = _clock.GetUtcNow();
         game.State = "START_REQUESTED";
@@ -1536,6 +1828,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     {
         if (_queue.FirstOrDefault(entry => entry.AccountId == account) is { } queued)
             throw AirFault.AlreadyInGame(joining, targetName, queued.QueueId, "Leave the queue first.");
+        // Batch 848: a spectator is in a game until the launch (FindObserved).
+        if (FindObserved(account) is { } watched) throw AirFault.AlreadyInGame(joining, targetName, watched.Id);
         var current = FindCurrent(account);
         if (current?.Result is not null) { ReturnFromResults(current, account); return; }
         if (current is not null) throw AirFault.AlreadyInGame(joining, targetName, current.Id);
@@ -1560,6 +1854,15 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     }
     private static bool IsTerminal(Lobby game) => game.State is "TERMINATED" or "FAILED_TO_START" or "TERMINATED_IN_ERROR";
     private Lobby? FindCurrent(long account) => _lobbies.Values.FirstOrDefault(g => !IsTerminal(g) && !g.Returned.Contains(account) && g.Members.Any(m => m.Account.Id == account));
+    /// <summary>
+    /// Batch 848: the lobby an account spectates while it is in team or champion selection (members only are in <see cref="FindCurrent"/>,
+    /// so no member rule, Returned count or results screen ever counts a spectator). From the launch on, the spectator only watches (its
+    /// start comes at <see cref="StartPlaying"/>, its stream plays locally) and the platform holds it in nothing: the stock client in its game
+    /// flow offers nothing else, and an AIR restarted mid-game has no way back to the game before S5's reconnect, so it must be free to
+    /// play. Reconstruction: retail's hold on a spectator is not recovered.
+    /// </summary>
+    private Lobby? FindObserved(long account) =>
+        _lobbies.Values.FirstOrDefault(g => !IsTerminal(g) && g.HostId is null && g.Observers.Any(o => o.Id == account));
     private Lobby RequireMember(long account, int id)
     {
         var game = Find(id); _ = MemberFor(game, account); return game;
@@ -1622,13 +1925,20 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     private void StartPlaying(Lobby game)
     {
         game.State = "IN_PROGRESS";
+        game.PlayingSince = _clock.GetUtcNow();
         Changed(game);
+        // Batch 848: the game plays, so its start-up chunks are recorded; each spectator gets its start (a PlayerCredentialsDto with observer
+        // set, through the same push as a player's credentials). AIR waits GameDTO.spectatorDelay, then starts the game client as a spectator
+        // (MasterGameController.handlePlayerCredentialsMessage, SpectatorController.spectateGame and startSpectating, both AIR lines).
+        if (game.ChunkKey is { } chunkKey)
+            foreach (var observer in game.Observers) Push(observer.Id, AirGameDtos.ObserverCredentials(game.Id, chunkKey));
         // NOT RETAIL: the host page's activity feed names a game that starts playing: its map, and its seats (humans and bots).
         var seats = game.Members.Count + game.Bots.Count;
         activity?.Add($"Game started · {HostActivity.MapName(game.MapId)} · {seats} {(seats == 1 ? "player" : "players")}");
     }
 
-    private void Changed(Lobby game)
+    /// <param name="pushMembers">False when only the spectators are told (the last player's own quit, see <see cref="Quit"/>).</param>
+    private void Changed(Lobby game, bool pushMembers = true)
     {
         game.Version++;
         if (game.StateSeen != game.State) { game.StateSeen = game.State; game.StateSince = _clock.GetUtcNow(); }
@@ -1637,6 +1947,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
             "FAILED_TO_START" or "TERMINATED_IN_ERROR")
             foreach (var member in game.Members) PresenceChanged(member.Account.Id);
         var dto = AirGameDtos.Game(game);
-        foreach (var member in game.Members) Push(member.Account.Id, dto);
+        if (pushMembers) foreach (var member in game.Members) Push(member.Account.Id, dto);
+        // Batch 848: the spectators follow the lobby, champion select and the launch through the same GameDTO pushes.
+        foreach (var observer in game.Observers) Push(observer.Id, dto);
     }
 }

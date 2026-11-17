@@ -61,6 +61,13 @@ public sealed record HeadlessMatchOptions(
 
     /// <summary>DIAGNOSTICS seam: sees each packet a peer is sent, after the replication store's filter (per run, unlike <c>PacketTap</c>).</summary>
     internal Action<int, PlaintextPacket>? PacketSink { get; init; }
+
+    /// <summary>
+    /// Batch 847: the spectator stream's folder (<c>--spectator-stream</c>, the server's switch) and its chunk key (the CLI reads
+    /// <c>AMBERLINE_SPECTATOR_KEY</c>, as the server does); null records nothing.
+    /// </summary>
+    public string? SpectatorStream { get; init; }
+    public string? SpectatorKey { get; init; }
 }
 
 /// <summary>What one team's five bots did; the check that both sides act reads these.</summary>
@@ -130,7 +137,9 @@ public sealed record HeadlessMatchReport(
     IReadOnlyList<ReconnectReport>? Reconnects = null, int TurretShots = 0, LaneWaveSummary? Waves = null, IReadOnlyList<(string Name, uint NetId, long Routes)>? PetRoutes = null,
     RevealMovementStatistics? RevealMovement = null,
     // Batch 451: the Odin wave units alive at the end of the match (the map 8 wave check of the orchestrator's brief).
-    int LiveWaveUnits = 0)
+    int LiveWaveUnits = 0,
+    // Batch 847: what the spectator recorder wrote and cost (null without --spectator-stream).
+    string? Spectator = null)
 {
     public int ExitCode => Outcome switch { "natural" or "stopped" => 0, "cap" => 2, _ => 3 };
 
@@ -179,6 +188,7 @@ public static class HeadlessMatch
         "             [--reconnect-seat <0-9> --reconnect-at <game seconds> [--drop-seconds D, default 10] [--load-seconds L, default 15]\n" +
         "              [--reconnect-when any|fight|dead, default any] [--reconnect-prime]]\n" +
         "             (repeat the group for another seat)\n" +
+        "             [--spectator-stream <dir> (records the spectator stream; chunk key in AMBERLINE_SPECTATOR_KEY)]\n" +
         "exit: 0 natural end, 1 usage error, 2 minute cap reached, 3 crash";
 
     public static int RunCli(string[] args)
@@ -207,6 +217,7 @@ public static class HeadlessMatch
             foreach (var finding in reconnect.Findings) Console.WriteLine("  reconnect-finding " + finding);
         }
         if (report.Ticks is not null) Console.WriteLine(report.Ticks);
+        if (report.Spectator is not null) Console.WriteLine(report.Spectator);
         if (report.PetRoutes is { Count: > 0 } pets)
         {
             // DIAGNOSTICS (diagnostic, batch 219): route packets of owned units (Tibbers, Shaco's box and clone, Yorick's ghouls), per receiving peer:
@@ -284,6 +295,7 @@ public static class HeadlessMatch
         var mapId = 1;
         int? players = null;
         string? output = null;
+        string? spectator = null;
         List<string>? roster = null;
         var plans = new List<PlanBuilder>();
         PlanBuilder Plan(string flag) => plans.Count != 0 ? plans[^1]
@@ -307,6 +319,7 @@ public static class HeadlessMatch
                         ? cap : throw new ArgumentException("--minutes must be between 0 and 600");
                     break;
                 case "--out": output = Value(); break;
+                case "--spectator-stream": spectator = Value(); break;
                 case "--map-id":
                     mapId = int.TryParse(Value(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mapValue) && GameMaps.IsSupported(mapValue)
                         ? mapValue : throw new ArgumentException($"--map-id must be {GameMaps.SupportedText}");
@@ -366,6 +379,9 @@ public static class HeadlessMatch
         {
             MapId = mapId,
             Reconnects = plans.Select(plan => new ReconnectPlan(plan.Seat, plan.At!.Value, plan.Drop, plan.Load, plan.When, plan.Prime, plan.Fault)).ToArray(),
+            SpectatorStream = spectator is null ? null : Path.GetFullPath(spectator),
+            SpectatorKey = spectator is null ? null : Environment.GetEnvironmentVariable(Amberline.Network.Spectator.SpectatorRecording.KeyVariable)
+                ?? throw new ArgumentException($"--spectator-stream needs the chunk key in {Amberline.Network.Spectator.SpectatorRecording.KeyVariable}"),
         };
     }
 
@@ -692,7 +708,9 @@ public static class HeadlessMatch
             driver?.Dashes, driver?.PacketTotals, driver?.HeroRoutes, driver?.HeroMotion, driver?.HeroAutomatic, driver?.OpcodeCounts,
             driver?.ReplicationShapes, driver?.ReconnectReports(), driver?.TurretShots ?? 0, waves, driver?.PetRoutes, driver?.RevealMovement,
             LiveWaveUnits: driver is null ? 0 : driver.Runtime.World.Entities.Values.Count(entity =>
-                entity.Alive && Amberline.Simulation.Minions.OdinWaves.ScriptOf(entity) is not null));
+                entity.Alive && Amberline.Simulation.Minions.OdinWaves.ScriptOf(entity) is not null),
+            Spectator: driver?.Spectator is { } spectator ? spectator.Statistics + FormattableString.Invariant(
+                $" ended={spectator.Ended} stopped={spectator.Stopped} delivery-ms={driver.Runtime.Delivery.SpectatorTime.TotalMilliseconds:0.0}") : null);
     }
 
     private static string ResolveGitCommit()
@@ -756,6 +774,10 @@ public static class HeadlessMatch
                 mapId: options.MapId);
             Runtime.World.Clock.SetVirtual(0.0);
             log.Clock = () => Runtime.World.Clock.Now();
+            // Batch 847: the production recorder, as the server attaches it for --spectator-stream (its chunk cadence runs on the virtual clock).
+            if (options.SpectatorStream is { } stream)
+                Spectator = Amberline.Network.Spectator.SpectatorRecorder.Attach(Runtime, stream,
+                    options.SpectatorKey ?? throw new ArgumentException("A spectator stream needs its chunk key."), log);
             // DIAGNOSTICS (batch 563): seat 0 is the tutorial's player, released from the bot scripts before the first step (PilotTutorial,
             // which since batch 593 also answers the popups and audio events with the client's 0xD5 and 0x05).
             if (options.MapId == GameMaps.Tutorial && Runtime.Waves?.LevelScript is not null)
@@ -787,6 +809,7 @@ public static class HeadlessMatch
         public IReadOnlyList<ReconnectReport> ReconnectReports() => _reconnects.Select(director => director.Report()).ToArray();
 
         public MatchRuntime Runtime { get; }
+        public Amberline.Network.Spectator.SpectatorRecorder? Spectator { get; }
         public TickStats Ticks => TickStats.From(_stepMs);
         public DashStatistics Dashes => _checker.Dashes;
         public HeroRouteStatistics HeroRoutes => _checker.HeroRoutes;

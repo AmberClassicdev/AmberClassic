@@ -47,14 +47,26 @@ public static class AirRankedChecks
         {
             await using var host = new Rig(root);
             var viewer = host.SignIn("notofferedview");
+            // Batch 844: a line's Ranked Teams queues (AirLine.RankedTeamQueues: 42 and 41 on 1.0.0.132, none on 1.0.0.126) come on top; the
+            // 132 check server.air132-ranked-teams-queue-team-vs-team pins them.
+            var teamQueues = AirLine.RankedTeamQueues.Select(queue => (double)queue.Id).ToArray();
             var queues = ((ArrayCollection)host.Rpc.Route(viewer.Username, "matchmakerService", "getAvailableQueues", [])!)
                 .Cast<AsObject>().ToDictionary(queue => (double)queue["id"]);
-            TestAssert.Equal("2,4,6,7,8,9,14,16,17", string.Join(",", queues.Keys.Order()), "the catalog has no queue 11, 18 or 19");
+            TestAssert.Equal("2,4,6,7,8,9,14,16,17", string.Join(",", queues.Keys.Where(id => !teamQueues.Contains(id)).Order()),
+                "the catalog has no queue 11, 18 or 19");
+            TestAssert.Equal(teamQueues.Length, queues.Keys.Count(teamQueues.Contains), "the line's Ranked Teams queues are listed");
             TestAssert.Equal("4,6,9", string.Join(",", queues.Values.Where(queue => Equals(queue["ranked"], true))
-                .Select(queue => (double)queue["id"]).Order()), "the ranked queues are 4, 6 and 9 (their sizes: RequirementsAsync)");
+                .Select(queue => (double)queue["id"]).Where(id => !teamQueues.Contains(id)).Order()), "the ranked queues are 4, 6 and 9 (their sizes: RequirementsAsync)");
             var login = (AsObject)host.Rpc.Route(viewer.Username, "clientFacadeService", "getLoginDataPacketForUser", [])!;
             var enabled = ((ArrayCollection)((AsObject)login["clientSystemStates"])["enabledQueueIdsList"]).Cast<object>().ToArray();
-            TestAssert.Equal(new object[] { 2d, 7d, 8d, 14d, 16d, 17d, 4d, 6d, 9d }, enabled, "the enabled queues are the nine the menu offers");
+            TestAssert.Equal(new object[] { 2d, 7d, 8d, 14d, 16d, 17d, 4d, 6d, 9d }.Concat(teamQueues.Cast<object>()).ToArray(), enabled,
+                "the enabled queues are the nine the menu offers, then the line's Ranked Teams queues");
+            // Batch 844: the team service answers only on a line with Ranked Teams queues; 1.0.0.126's AIR 1.45 has none (FakeTeamService), and
+            // there the call stays "not implemented".
+            if (teamQueues.Length == 0)
+                TestAssert.Throws<ArgumentException>(() => host.Rpc.Route(viewer.Username, "summonerTeamService", "createPlayer", []),
+                    "no team service without Ranked Teams queues");
+            else TestAssert.True(host.Rpc.Route(viewer.Username, "summonerTeamService", "createPlayer", []) is AsObject, "the team service answers");
 
             // Refusals: a solo player on 11 or 19, and a duo on 11, 18 or 19 (the client moves a duo only to queue 4), get the refusal.
             var mate = host.SignIn("notofferedmate");

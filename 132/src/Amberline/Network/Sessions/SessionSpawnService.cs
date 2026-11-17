@@ -211,8 +211,9 @@ public sealed class SessionSpawnService
         return result;
     }
 
+    /// <param name="recipient">The seat the burst is for; null for the spectator stream (batch 847), which gets every hero as another seat's.</param>
     public IReadOnlyList<PlaintextPacket> BuildHeroSpawnBurst(
-        SessionParticipant recipient,
+        SessionParticipant? recipient,
         IReadOnlyList<SessionParticipant> participants,
         bool includeStartSpawn = true,
         bool revealNonRecipient = true,
@@ -220,9 +221,8 @@ public sealed class SessionSpawnService
         bool includeChampionSpells = true,
         bool includeClassicHeroStats = true)
     {
-        ArgumentNullException.ThrowIfNull(recipient);
         ArgumentNullException.ThrowIfNull(participants);
-        if (recipient.Hero is null || !participants.Contains(recipient))
+        if (recipient is not null && (recipient.Hero is null || !participants.Contains(recipient)))
             throw new InvalidOperationException("The recipient must be part of the created session world.");
 
         var packets = new List<PlaintextPacket>();
@@ -313,7 +313,7 @@ public sealed class SessionSpawnService
                 packets.AddRange(VisionPackets.LeaveVisibility(hero.NetId));
         }
 
-        if (_visibilityBaseline && recipient.Team == Team.Order)
+        if (_visibilityBaseline && recipient?.Team == Team.Order)
         {
             var probe = _world.Entities.Values.FirstOrDefault(entity =>
                 entity.Kind == EntityKind.Minion && entity.Name == "Minion_Basic" &&
@@ -340,6 +340,15 @@ public sealed class SessionSpawnService
         IReadOnlyList<Entity> mapEntities)
     {
         ArgumentNullException.ThrowIfNull(recipient);
+        return BuildMapReadyBurst(recipient.View, recipient.Hero ?? throw new InvalidOperationException("Recipient hero is not created."),
+            mapEntities);
+    }
+
+    /// <param name="hero">The recipient's hero, whose spot the start camera looks at; null for the spectator stream (batch 847): the replay
+    /// client has no local hero and keeps its own camera.</param>
+    public IReadOnlyList<PlaintextPacket> BuildMapReadyBurst(ReplicationView view, Entity? hero, IReadOnlyList<Entity> mapEntities)
+    {
+        ArgumentNullException.ThrowIfNull(view);
         ArgumentNullException.ThrowIfNull(mapEntities);
         var packets = new List<PlaintextPacket>();
         foreach (var turret in mapEntities.Where(entity => entity.UnitType == UnitType.Turret))
@@ -378,12 +387,12 @@ public sealed class SessionSpawnService
 
         packets.Add(SpawnPackets.EndSpawn());
         packets.Add(SpawnPackets.StartGame());
-        var hero = recipient.Hero ?? throw new InvalidOperationException("Recipient hero is not created.");
         // Native camera interpolation divides distance by travel time. A tiny
         // positive duration snaps on the next frame, including zero-distance
         // Order starts, without producing 0/0 in the stock camera controller.
-        packets.Add(CombatPackets.MoveCameraToPoint(hero.NetId,
-            new Position3(hero.Position.X, GroundHeight(hero.Position), hero.Position.Z), travelTime: 0.001f));
+        if (hero is not null)
+            packets.Add(CombatPackets.MoveCameraToPoint(hero.NetId,
+                new Position3(hero.Position.X, GroundHeight(hero.Position), hero.Position.Z), travelTime: 0.001f));
         // The Dominion props (DominionProps): the stairs and, since batch 491, the two nexus crystals, all by name at their scene spawners,
         // on the Crystal Scar only. Each crystal's hold and gem follow its create.
         var odinProps = DominionProps.FromEnvironment();
@@ -395,10 +404,10 @@ public sealed class SessionSpawnService
             packets.AddRange(DominionProps.CrystalStandPackets(new NavigationBounds(grid.MinX, grid.MaxX, grid.MinZ, grid.MaxZ),
                 team => mapEntities.Any(entity => entity.Kind == EntityKind.Nexus && entity.Team == team && !entity.Alive)));
             // The gems' kill at a nexus fall (0x3D) names them, and the delivery routes a packet only to a client that holds what it names.
-            recipient.View.Known.Add(DominionProps.CrystalGemNetId(Team.Order));
-            recipient.View.Known.Add(DominionProps.CrystalGemNetId(Team.Chaos));
+            view.Known.Add(DominionProps.CrystalGemNetId(Team.Order));
+            view.Known.Add(DominionProps.CrystalGemNetId(Team.Chaos));
             // Batch 507: the stairs' lasers (0x8C) are bound to the stairs and aimed at the crystals, so the client must hold all four props.
-            recipient.View.Known.UnionWith([DominionProps.OrderStairsNetId, DominionProps.ChaosStairsNetId,
+            view.Known.UnionWith([DominionProps.OrderStairsNetId, DominionProps.ChaosStairsNetId,
                 DominionProps.OrderCrystalNetId, DominionProps.ChaosCrystalNetId]);
         }
         // Batch 802: each building's current protection, as the live path sends it (ProtocolCombatTransport.StructureProtectionPacket). At the

@@ -31,6 +31,8 @@ public static class AirProtocolNames
     public const string GameNameNotUniqueException = "com.riotgames.platform.game.GameNameNotUniqueException";
     public const string GameNotDraftModeTurnException = "com.riotgames.platform.game.GameNotDraftModeTurnException";
     public const string GameNotFoundException = "com.riotgames.platform.game.GameNotFoundException";
+    /// <summary>Batch 848: GameDTO.observers' element, a spectator (GameObserver.as).</summary>
+    public const string GameObserver = "com.riotgames.platform.game.GameObserver";
     public const string GameReconnectInfoDTO = "com.riotgames.platform.game.GameReconnectInfoDTO";
     public const string GameTypeConfigDTO = "com.riotgames.platform.game.GameTypeConfigDTO";
     public const string IncorrectPasswordException = "com.riotgames.platform.game.IncorrectPasswordException";
@@ -81,6 +83,21 @@ public static class AirProtocolNames
     public const string RawStat = "com.riotgames.platform.statistics.RawStat";
     public const string RawStatDTO = "com.riotgames.platform.statistics.RawStatDTO";
     public const string RecentGames = "com.riotgames.platform.statistics.RecentGames";
+    /// <summary>Batch 854: the spectator's end of game the grid serves (SpectatorEndOfGameStats, SpectatorPlayerParticipantStatsSummary,
+    /// SpectatorRawStatDTO; aliases-132.csv), each the statistics class's subclass with no field of its own.</summary>
+    public const string SpectatorEndOfGameStats = "com.riotgames.platform.observer.domain.EndOfGameStats";
+    public const string SpectatorPlayerParticipantStatsSummary = "com.riotgames.platform.observer.domain.PlayerParticipantStatsSummary";
+    public const string SpectatorRawStatDTO = "com.riotgames.platform.observer.domain.RawStatDTO";
+    /// <summary>Batch 844: the Ranked Teams classes (AirTeamDtos).</summary>
+    public const string TeamId = "com.riotgames.team.TeamId";
+    public const string TeamInfo = "com.riotgames.team.TeamInfo";
+    public const string TeamPlayer = "com.riotgames.team.Player";
+    public const string TeamDTO = "com.riotgames.team.dto.TeamDTO";
+    public const string RosterDTO = "com.riotgames.team.dto.RosterDTO";
+    public const string TeamMemberInfoDTO = "com.riotgames.team.dto.TeamMemberInfoDTO";
+    public const string TeamStatSummary = "com.riotgames.team.stats.TeamStatSummary";
+    public const string TeamStatDetail = "com.riotgames.team.stats.TeamStatDetail";
+    public const string TeamMatchHistorySummary = "com.riotgames.team.stats.MatchHistorySummary";
     public const string SummaryAggStat = "com.riotgames.platform.statistics.SummaryAggStat";
     public const string SummaryAggStats = "com.riotgames.platform.statistics.SummaryAggStats";
     public const string AllPublicSummonerDataDTO = "com.riotgames.platform.summoner.AllPublicSummonerDataDTO";

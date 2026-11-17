@@ -462,6 +462,33 @@ public static class SummonerCoreChecks
             "Cleanse must not bypass suppression");
     }
 
+    // Batch 834 (17 November 2026), 129.41 on 1.0.0.132: Clairvoyance's cooldown is 70 seconds (126: 55). Cast-driven: the cast's
+    // AdjustCooldown (the summoner's script) sets the slot's cooldown, as the Smite check above does for its 70.
+    [Check("spells-summoners-p132-clairvoyance-cooldown-is-seventy")]
+    public static void ClairvoyanceCooldownIsSeventy()
+    {
+        var runtime = CreateRuntime();
+        var caster = Hero(runtime, Team.Order, SpawnPoint(), ["SummonerClairvoyance", "SummonerDot"]);
+        TestAssert.True(Cast(runtime, caster, 0, caster.Position), "Clairvoyance is cast at a point on the caster");
+        TestAssert.Equal(70.0, caster.SummonerCooldowns[0],
+            "Clairvoyance cools down 70 seconds on 1.0.0.132 (126: 55; change list 129.41)");
+    }
+
+    // Batch 834, 129.43 on 1.0.0.132: Exhaust lasts 2.5 seconds (126: 3). Cast-driven: the slow, the summoner's mark and the debuff the cast adds
+    // (SummonerExhaust.luaobj) each run 2.5 s; the one read here is the summoner's own mark on the enemy.
+    [Check("spells-summoners-p132-exhaust-lasts-two-and-a-half-seconds")]
+    public static void ExhaustLastsTwoAndAHalfSeconds()
+    {
+        var runtime = CreateRuntime();
+        runtime.World.Clock.SetVirtual(0); // the buff's expiry and the clock read share one base (the BbM3 match harness does the same)
+        var caster = Hero(runtime, Team.Order, new Position2(7000.0, 7000.0), ["SummonerExhaust", "SummonerDot"], level: 5);
+        var target = Hero(runtime, Team.Chaos, new Position2(7300.0, 7000.0), ["SummonerHeal", "SummonerHaste"]);
+        TestAssert.True(Cast(runtime, caster, 0, target.Position, target.NetId), "Exhaust is cast on the enemy hero");
+        var mark = target.Buffs.Single(buff => buff.Name == "SummonerExhaust");
+        TestAssert.Near(2.5, mark.ExpiresAt - runtime.World.Clock.Now(), 0.1,
+            "Exhaust lasts 2.5 seconds on 1.0.0.132 (126: 3; change list 129.43)");
+    }
+
     [Check("spells-summoners-core-clairvoyance-visibility-lifecycle")]
     public static void ClairvoyanceVisibilityLifecycle()
     {

@@ -201,7 +201,7 @@ public static class BbJaxChecks
         TestAssert.Near(1.5, match.Now - opened, 0.1, $"the window closes 1.5 seconds after it opens (open for {match.Now - opened:0.###} s)");
     }
 
-    [Check("scripting.bb-jax-counter-strike-dodge-grows-with-its-rank")]
+    [Check("scripting.bb-jax-counter-strike-dodge-is-flat-and-the-counter-grows-with-its-rank")]
     public static void CounterStrikeDodgeGrowsWithItsRank()
     {
         // 132 (126: CounterStrikeDodgeUp added 10, 12, 14, 16, 18 percent dodge by rank). The 132 dodge is flat: JaxCounterStrike's BuffOnUpdateStats

@@ -27,6 +27,8 @@ public sealed class GameManager : IAsyncDisposable
         public string? Mode;
         public string Directory = directory;
         public string Key = RandomNumberGenerator.GetString("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", 16);
+        /// <summary>Batch 848: the spectator stream's chunk key when the platform asked for a recording; null records nothing.</summary>
+        public string? SpectatorKey;
         public string State = "Starting";
         public long? StoppedAt;
         public string? Error;
@@ -138,8 +140,10 @@ public sealed class GameManager : IAsyncDisposable
     /// <paramref name="participants"/> lists the human seats in roster order; bot seats are
     /// server-owned, hold no participant and cannot be claimed or joined.
     /// </summary>
+    /// <param name="spectatorKey">Batch 848: the chunk key of a game that records a spectator stream (in <see cref="SpectatorFolder"/>);
+    /// null records nothing.</param>
     public RemoteGame CreateReserved(HostGuest guest, CreateGameRequest request, IReadOnlyList<HostGuest> participants,
-        Action<Guid>? beforeStart = null)
+        Action<Guid>? beforeStart = null, string? spectatorKey = null)
     {
         var humanSeats = Enumerable.Range(1, request.Players.Length).Where(seat => !request.Players[seat - 1].IsBot).ToArray();
         if (humanSeats.Length == 0 || participants.Count != humanSeats.Length ||
@@ -147,11 +151,18 @@ public sealed class GameManager : IAsyncDisposable
             participants.Select(p => p.Id).Distinct(StringComparer.Ordinal).Count() != participants.Count)
             throw new ArgumentException("Every platform human seat requires a distinct authenticated participant.");
         return CreateCore(guest, request, humanSeats.Zip(participants, (seat, participant) => (seat, participant.Id))
-            .ToDictionary(pair => pair.seat, pair => pair.Id), beforeStart);
+            .ToDictionary(pair => pair.seat, pair => pair.Id), beforeStart, spectatorKey);
     }
 
+    /// <summary>Batch 848: the spectator stream folder of game <paramref name="id"/>, its own folder's
+    /// <see cref="Amberline.Network.Spectator.SpectatorRecording.FolderName"/> (batch 846's contract).</summary>
+    public string SpectatorFolder(Guid id) => Path.Combine(_directory, id.ToString("N"), Amberline.Network.Spectator.SpectatorRecording.FolderName);
+
+    /// <summary>DIAGNOSTICS: test seam; sees each game server's start (arguments and environment) just before the process starts.</summary>
+    public Action<ProcessStartInfo>? Starting { get; set; }
+
     private RemoteGame CreateCore(HostGuest guest, CreateGameRequest request, IReadOnlyDictionary<int, string>? reservedOwners,
-        Action<Guid>? beforeStart = null)
+        Action<Guid>? beforeStart = null, string? spectatorKey = null)
     {
         lock (_gate)
         {
@@ -174,7 +185,7 @@ public sealed class GameManager : IAsyncDisposable
             var id = Guid.NewGuid();
             var game = new Game(id, request.RequestId, guest, players, port, Path.Combine(_directory, id.ToString("N")))
             {
-                MapId = request.MapId, Mode = request.Mode,
+                MapId = request.MapId, Mode = request.Mode, SpectatorKey = spectatorKey,
             };
             if (reservedOwners is not null)
                 foreach (var (seat, owner) in reservedOwners) game.Claims.Add(seat, owner);
@@ -303,6 +314,13 @@ public sealed class GameManager : IAsyncDisposable
                          Path.Combine(game.Directory, "logs"), "--launcher-control", "--managed-status", "--map-id", game.MapId.ToString() }) start.ArgumentList.Add(arg);
             if (game.Mode is { } gameMode) { start.ArgumentList.Add("--game-mode"); start.ArgumentList.Add(gameMode); }
             start.Environment["AMBERLINE_MATCH_KEY"] = game.Key;
+            // Batch 848: a spectated game records its stream (batch 846's contract): the folder as a switch, the chunk key in the environment.
+            if (game.SpectatorKey is { } spectatorKey)
+            {
+                start.ArgumentList.Add(Amberline.Network.Spectator.SpectatorRecording.StreamSwitch);
+                start.ArgumentList.Add(SpectatorFolder(game.Id));
+                start.Environment[Amberline.Network.Spectator.SpectatorRecording.KeyVariable] = spectatorKey;
+            }
             start.Environment["AMBERLINE_SESSION_ID"] = game.Id.ToString();
             start.Environment["GAME_DATA_ROOT"] = _settings.DataRoot;
             start.Environment.Remove("AMBERLINE_ENET_NATIVE");
@@ -333,6 +351,7 @@ public sealed class GameManager : IAsyncDisposable
                 if (args.Data is { } line) lock (_gate) RecordDiagnostic(game, line);
             };
             game.Stop.Token.ThrowIfCancellationRequested();
+            Starting?.Invoke(start);
             processStarted = process.Start();
             if (!processStarted) throw new IOException("Game process did not start.");
             process.BeginOutputReadLine();
@@ -406,6 +425,7 @@ public sealed class GameManager : IAsyncDisposable
                     game.StoppedAt = Stopwatch.GetTimestamp();
                 }
                 game.Key = "";
+                game.SpectatorKey = null;
                 Save(game);
             }
         }

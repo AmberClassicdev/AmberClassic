@@ -1376,15 +1376,15 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     private void SetSpellToolTipVar(BbCall call)
     {
         var owner = Unit(call, "TargetVar") ?? throw new BbRuntimeException("BBSetSpellToolTipVar has no unit");
-        if ((BbSpellbook)(int)(call.Value("SlotBook") as double? ?? 0.0) != BbSpellbook.SPELLBOOK_CHAMPION)
-            throw BbSpellHost.Unbound("BBSetSpellToolTipVar on the summoner spellbook", "M3");
+        var summonerBook = (BbSpellbook)(int)(call.Value("SlotBook") as double? ?? 0.0) == BbSpellbook.SPELLBOOK_SUMMONER;
         var index = (int)Sum(call, "Index");
         if (index is < 1 or > 3) throw new BbRuntimeException($"BBSetSpellToolTipVar: tooltip index {index} is outside 1..3");
         // The spellbook slot the packet names: spells 0-3, inventory spells from 4 (the client maps InventorySlots to +4 and
-        // ExtraSlots to +42 the same way).
+        // ExtraSlots to +42 the same way). Batch 841: the summoner book's slots (the 132 summoner scripts' SpellUpdateTooltip) are the
+        // packet's own range from SpellPackets.SummonerTooltipSlot.
         var type = (BbSlotType)(int)(call.Value("SlotType") as double? ?? 0.0);
         var number = (int)Sum(call, "SlotNumber");
-        var slot = type switch
+        var slot = summonerBook ? Amberline.Network.Protocol.SpellPackets.SummonerTooltipSlot + number : type switch
         {
             BbSlotType.SpellSlots => number,
             BbSlotType.InventorySlots => number + 4,

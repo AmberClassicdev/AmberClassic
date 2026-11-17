@@ -2,6 +2,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
@@ -12,7 +13,9 @@ namespace Amberline.AirCompanion;
 /// NOT RETAIL: the friend's sign-in for the remote tunnels (retail has no tunnel). The friend signs in once, in the AIR client, with
 /// the login the host created: AIR posts it to the login queue, the proxy passes it to the platform over the pinned HTTPS port, and the
 /// platform answers with a per-account bearer. The companion caches the bearer in the stage's connections folder until it expires or
-/// the platform refuses it. The login is never logged, written to disk or put in a URL.
+/// the platform refuses it. The login is never logged, written to disk or put in a URL. Batch 854: beside the bearer the cache keeps a
+/// SHA-256 of the user name it was issued for (<see cref="LoginKey"/>), never the name itself, so a later AIR login as someone else signs
+/// in again (<c>AirRemoteProxyHandle.SignInFromLoginAsync</c>).
 /// </summary>
 public static class RemoteSignIn
 {
@@ -22,8 +25,9 @@ public static class RemoteSignIn
 
     public sealed record Credentials(string Username, string Password);
 
-    /// <summary>The bearer and the identity it was issued for: a cached token leaves the companion only for that host, port and pin.</summary>
-    private sealed record CachedToken(string Token, DateTimeOffset Expires, string Host, int Port, string CertificateSha256)
+    /// <summary>The bearer and the identity it was issued for: a cached token leaves the companion only for that host, port and pin.
+    /// Batch 854: <paramref name="Login"/> is the <see cref="LoginKey"/> of the login it was issued for (null in a cache written before).</summary>
+    private sealed record CachedToken(string Token, DateTimeOffset Expires, string Host, int Port, string CertificateSha256, string? Login = null)
     {
         public bool IsFor(AirRemoteInvitation invitation) =>
             string.Equals(Host, invitation.Host, StringComparison.OrdinalIgnoreCase) && Port == invitation.Port &&
@@ -64,10 +68,20 @@ public static class RemoteSignIn
             ?? throw new IOException("The remote sign-in reply was empty.");
         if (!IsHex64(reply.Token)) throw new IOException("The remote sign-in reply carried an invalid token.");
         if (connectionsDirectory is not null)
-            WriteCache(CachePath(connectionsDirectory),
-                new CachedToken(reply.Token, reply.Expires, invitation.Host, invitation.Port, invitation.CertificateSha25664hex));
+            WriteCache(CachePath(connectionsDirectory), new CachedToken(reply.Token, reply.Expires, invitation.Host, invitation.Port,
+                invitation.CertificateSha25664hex, LoginKey(credentials.Username)));
         return reply.Token;
     }
+
+    /// <summary>
+    /// Batch 854: whose bearer this is, without the login: a SHA-256 of the user name exactly as AIR posted it (the platform compares
+    /// user names exactly, <c>PlatformAccounts.Authenticate</c>).
+    /// </summary>
+    internal static string LoginKey(string username) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(username)));
+
+    /// <summary>Batch 854: the <see cref="LoginKey"/> the cache holds for <paramref name="token"/> on this host, port and pin; null when it holds none.</summary>
+    internal static string? CachedLogin(string connectionsDirectory, AirRemoteInvitation invitation, string token) =>
+        ReadCache(CachePath(connectionsDirectory)) is { } cached && cached.IsFor(invitation) && cached.Token == token ? cached.Login : null;
 
     /// <summary>
     /// The login AIR posts to the login queue: its <c>payload</c> field is <c>user=&lt;name&gt;,password=&lt;password&gt;</c>. It is split

@@ -112,8 +112,9 @@ public static class AirIntegrationChecks
             TestAssert.True(accounts.Get(account.Id).TutorialFlag);
             var queues = (ArrayCollection)rpc.Route("client", "matchmakerService", "getAvailableQueues", [])!;
             // Batch 571: the normal 5v5 queue, Co-op vs. AI (7) and Twisted Treeline 3v3 (8); batch 579: normal draft (14), Dominion (16, 17);
-            // batch 586: ranked solo/duo (4) and the ranked team queues (6, 9); batch 805 retired 11, 18 and 19 (batch 590), so nine are listed.
-            TestAssert.Equal(9, queues.Count);
+            // batch 586: ranked solo/duo (4) and the ranked team queues (6, 9); batch 805 retired 11, 18 and 19 (batch 590); batch 844 adds
+            // the 1.52 Ranked Teams queues 42 and 41, so eleven are listed.
+            TestAssert.Equal(11, queues.Count);
             var queue = (AsObject)queues[0];
             TestAssert.Equal("com.riotgames.platform.matchmaking.GameQueueConfig", queue.TypeName);
             TestAssert.Equal(2d, queue["id"]); // stock PvP / Classic / SR / Normal leaf

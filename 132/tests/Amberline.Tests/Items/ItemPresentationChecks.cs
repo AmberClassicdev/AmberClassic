@@ -363,7 +363,11 @@ public static partial class ChampionLiveRegressionChecks
         var packet = packets.Where(candidate => Opcode(candidate) == 0x84).Last();
         var decoded = WirePacketDecoder.Decode(packet.Plaintext.Span, packet.Channel);
         TestAssert.Equal("ToolTipVars", decoded.Name, "tooltip packet decoder name");
-        return JsonSerializer.SerializeToElement(decoded.Fields["entries"]);
+        // Batch 841: a publication carries every row the hero holds, and on 1.0.0.132 that includes the summoner book's (selector 0x78 and
+        // up, written by the summoner scripts' SpellUpdateTooltip). These checks count the champion and item rows.
+        var entries = JsonSerializer.SerializeToElement(decoded.Fields["entries"]);
+        return JsonSerializer.SerializeToElement(entries.EnumerateArray()
+            .Where(entry => entry.GetProperty("selector").GetInt32() < 0x78).ToArray());
     }
 
     private static PlaintextPacket FindEffect(

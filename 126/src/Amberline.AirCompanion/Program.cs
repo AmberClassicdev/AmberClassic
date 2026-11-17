@@ -152,10 +152,10 @@ public static class Program
                     : $"Connected remote AIR platform; local proxy HTTP {remoteProxy.HttpPort}, RTMP 2099, chat 5222.");
             }
             else platform = await EnsurePlatformAsync(stage, stop.Token);
-            if (await ClassicAsync(stage, remoteProxy?.HttpPort ?? stage.HttpPort, clientShown, askClassic, notice, stop.Token) is { } classicExit)
+            if (await ClassicAsync(stage, remoteProxy?.HttpPort ?? stage.HttpPort, remoteProxy, clientShown, askClassic, notice, stop.Token) is { } classicExit)
                 return classicExit;
             ResetLanguageToEnglish(stage);
-            maestro = CreateMaestro(stage.MaestroPort, stage.StockExecutable, stage.RemoteInvitation?.Host ?? stage.GameHost);
+            maestro = CreateMaestro(stage.MaestroPort, stage.StockExecutable, stage.RemoteInvitation?.Host ?? stage.GameHost, remoteProxy);
             await maestro.StartAsync(stop.Token);
             var exitCode = await RunAirAsync(maestro, CreateAirStartInfo(stage.AirRoot), stop.Token, clientShown);
 
@@ -197,10 +197,11 @@ public static class Program
     /// NOT RETAIL: the classic start (ClassicStart; design 2026-11-12 §2, §5). Retail's 2011 launcher ran on Riot's update service and started
     /// AIR and the game itself; here the player's own launcher runs on our stand-in for that service, with no Maestro of ours. The exit code once
     /// the classic session has ended; null when the usual start runs instead: no launcher here, the player chose it this time, or a fallback,
-    /// whose reason is logged and told once through <paramref name="notice"/>.
+    /// whose reason is logged and told once through <paramref name="notice"/>. Batch 854: a friend's tool (<paramref name="remote"/>) opens its
+    /// spectator port for the session (<see cref="AirRemoteProxyHandle.ListenForSpectators"/>).
     /// </summary>
-    private static async Task<int?> ClassicAsync(DesktopStage stage, int newsPort, Action? clientShown, Func<bool>? askClassic, Action<string>? notice,
-        CancellationToken stop)
+    private static async Task<int?> ClassicAsync(DesktopStage stage, int newsPort, AirRemoteProxyHandle? remote, Action? clientShown,
+        Func<bool>? askClassic, Action<string>? notice, CancellationToken stop)
     {
         var root = RadsRegistry.Root();
         var plan = ClassicStart.Decide(stage, root, port => PlayerMode.BusyPort([port]) is null, ClassicStart.MutexFree);
@@ -212,6 +213,9 @@ public static class Program
             // The AIR lease and repairs come first, as AIR now starts later, from the launcher; the lease is held until the session ends.
             using var lease = PrepareAirCopy(CreateAirStartInfo(stage.AirRoot));
             if (lease is null) return 0;
+            // NOT RETAIL (batch 854): the launcher's own Maestro starts a spectator client, which this tool never sees, so a friend's
+            // spectator port listens for the whole session; a clash is one plain line, and the session goes on.
+            remote?.ListenForSpectators(notice);
             // The stand-in's mutex, then the layout, inside RunAsync: one guard covers both.
             reason = await ClassicStart.GuardedAsync(() => ClassicStart.RunAsync(stage, new(root!, stage.LauncherRoot!, stage.AirRoot,
                 Path.GetDirectoryName(stage.StockExecutable)!, newsPort), Console.WriteLine, clientShown, stop), stop);
@@ -395,12 +399,16 @@ public static class Program
         return start;
     }
 
-    private static MaestroServer CreateMaestro(int port, string stockExecutable, string? remoteHost = null)
+    /// <param name="remote">NOT RETAIL (batch 853): a friend's tunnel; a spectator launch opens this PC's 8088 to the host's grid while it runs.</param>
+    private static MaestroServer CreateMaestro(int port, string stockExecutable, string? remoteHost = null, AirRemoteProxyHandle? remote = null)
     {
         var maestro = remoteHost is null
             ? new MaestroServer(port, stockExecutable)
-            : new MaestroServer(port, request => new StockClientLauncher(stockExecutable, port).Launch(
-                request with { ServerHost = remoteHost }));
+            : new MaestroServer(port, request =>
+            {
+                var launch = new StockClientLauncher(stockExecutable, port).Launch;
+                return remote is null ? launch(request with { ServerHost = remoteHost }) : remote.Launch(request with { ServerHost = remoteHost }, launch);
+            });
         maestro.PeerConnected += () => Console.WriteLine("maestro.peer-connected");
         maestro.NativeGameConnected += () => Console.WriteLine("maestro.game-connected (native message received)");
         maestro.MessageReceived += message => Console.WriteLine($"maestro.received type={message.Type} bytes={message.Payload.Length}");

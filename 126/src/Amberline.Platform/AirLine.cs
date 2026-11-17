@@ -16,4 +16,18 @@ public static class AirLine
 
     /// <summary>The bundle's matchmaking_join_rankedqueue_reason_champs: 14 in 126 (the four 2011 draft bans and ten picks; 16 came with six bans).</summary>
     public const int RankedMinChampions = 14;
+
+    /// <summary>
+    /// Batch 844: no Ranked Teams queue on this line. AIR 1.45's TeamService is FakeTeamService (ClientModuleServices.as:88, a local stub with
+    /// no remote call) and mod_rt.dat does not ship, so nothing offers a team queue and the platform routes no team service. 1.0.0.132's copy
+    /// lists queues 42 and 41.
+    /// </summary>
+    public static PlatformGames.QueueRule[] RankedTeamQueues => [];
+
+    /// <summary>
+    /// Batch 854: no drop-in spectating on this line. AIR 1.45 never calls retrieveInProgressSpectatorGameInfo (SpectatorController.spectateSummoner
+    /// exists, nothing calls it; design 845, B1) and has no spectator end of game, so a game records only with a spectator in its slots.
+    /// 1.0.0.132's copy is true.
+    /// </summary>
+    public static bool SpectatorDropIn => false;
 }

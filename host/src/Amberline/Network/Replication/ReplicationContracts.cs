@@ -52,6 +52,9 @@ public readonly record struct BallProjection(
 public interface IReplicationTransport
 {
     void Send(PlaintextPacket packet);
+
+    /// <summary>Called once at the end of every delivery flush that included this transport's observer (batch 847: the spectator recorder's clock).</summary>
+    void Flushed() { }
 }
 
 /// <summary>
@@ -96,6 +99,26 @@ public sealed class ReplicationObserver
         DeathRecapReady = deathRecapReady;
         View = view ?? new ReplicationView();
     }
+
+    /// <summary>
+    /// Batch 847 (spectating S2): the spectator stream's view (<c>SpectatorRecorder</c>). It has no hero and no client id, and sees what either
+    /// team sees: its team is <see cref="SpectatorTeam"/>, a value no unit carries, so a rule that compares a unit's team with the observer's
+    /// treats every unit as an enemy unless it asks <see cref="Allied"/>; the delivery gives it the union of the Order and Chaos sight and the
+    /// per-team masks the replay client's fog reads (design 845 B3, C4).
+    /// </summary>
+    public static ReplicationObserver ForSpectator(IReplicationTransport transport) =>
+        new(SpectatorObserverId, SpectatorTeam, 0, transport) { Spectator = true };
+
+    /// <summary>The spectator's observer id: player ids are refused at <see cref="ulong.MaxValue"/>, so it never meets a seat's.</summary>
+    public const ulong SpectatorObserverId = ulong.MaxValue;
+
+    /// <summary>The spectator's team key: no unit carries it (Order 0, Chaos 1, Neutral 2).</summary>
+    public const Team SpectatorTeam = (Team)3;
+
+    public bool Spectator { get; private init; }
+
+    /// <summary>The team's units are this view's own: its team for a player, Order and Chaos for the spectator (never the camps).</summary>
+    public bool Allied(Team team) => Spectator ? team is Team.Order or Team.Chaos : team == Team;
 
     public ulong ObserverId { get; }
     public Team Team { get; }
@@ -150,6 +173,11 @@ public sealed class ReplicationView
     public HashSet<uint> StaleDashes { get; } = new();
     /// <summary>What this client's replication store holds; filters each 0xCC block down to the fields that changed.</summary>
     public ClientReplicationStore Store { get; } = new();
+    /// <summary>
+    /// Batch 847: the spectator's per-unit team mask as its client holds it (bit 0 Order, bit 1 Chaos), for the units in its view; a unit that
+    /// leaves the view is forgotten, so its next entry sends both bits again.
+    /// </summary>
+    public Dictionary<uint, byte> TeamMasks { get; } = new();
     public bool TerrainBootstrapped { get; set; }
 
     /// <summary>
@@ -207,6 +235,7 @@ public sealed class ReplicationView
         Buffs.Clear();
         StaleDashes.Clear();
         Store.Clear();
+        TeamMasks.Clear();
         TerrainBootstrapped = false;
         VisibilityRefreshSuppressed = false;
     }

@@ -75,15 +75,20 @@ public static class Air132LoginChecks
         TestAssert.True(states.GetProperty("advancedTutorialEnabled").GetBoolean());
         TestAssert.True(states.GetProperty("tribunalEnabled").GetBoolean());
         TestAssert.True(states.GetProperty("storeCustomerEnabled").GetBoolean());
-        TestAssert.False(states.GetProperty("observerModeEnabled").GetBoolean());
+        // Batch 848: spectating custom games, four slots. Batch 854 (restated): the friends list's drop-in, custom games only (owner,
+        // 17 November 2026): canDropInSpectate reads these two, ALL for custom games, no queue.
+        TestAssert.True(states.GetProperty("observerModeEnabled").GetBoolean());
+        TestAssert.Equal(4, states.GetProperty("spectatorSlotLimit").GetInt32());
+        TestAssert.Equal("ALL", states.GetProperty("observableCustomGameModes").GetString());
+        TestAssert.Equal(0, states.GetProperty("observableGameModes").GetArrayLength());
         TestAssert.False(states.GetProperty("mucServiceEnabled").GetBoolean());
         TestAssert.Equal(1, states.GetProperty("minNumPlayersForPracticeGame").GetInt32());
         TestAssert.Equal(60, states.GetProperty("clientHeartBeatRateSeconds").GetInt32());
         TestAssert.Equal("1,2", string.Join(",", states.GetProperty("practiceGameTypeConfigIdList").EnumerateArray().Select(x => x.GetInt32())));
         TestAssert.Equal(string.Join(",", PlatformGames.Queues.Select(queue => queue.Id)),
             string.Join(",", states.GetProperty("enabledQueueIdsList").EnumerateArray().Select(x => x.GetInt32())));
-        // The two 1.52 switches stay off: Ranked Teams (ApplicationController.as:1124) and the game-zone start (as:1725-1727).
-        TestAssert.False(states.GetProperty("teamServiceEnabled").GetBoolean());
+        // Batch 844: Ranked Teams on (ApplicationController.as:1124 loads the RT module); the game-zone start stays off (as:1725-1727).
+        TestAssert.True(states.GetProperty("teamServiceEnabled").GetBoolean());
         TestAssert.False(states.GetProperty("modularGameModeEnabled").GetBoolean());
         // copyProps writes each key into the sealed QueueThrottleDTO / GameMapEnabledDTO, so only their declared fields may appear.
         var throttle = states.GetProperty("queueThrottleDTO");

@@ -34,6 +34,8 @@ public sealed class BbSummonerModule
     private readonly BbScriptSet _scripts;
     private BbSpellHost? _host;
     private BbHookRouter? _router;
+    private BbLoadoutHooks? _loadout;
+    private double _tooltipClock;
 
     public BbSummonerModule(GameData? data = null)
     {
@@ -90,6 +92,7 @@ public sealed class BbSummonerModule
         host.Buffs = new BbBuffRuntime(host, _scripts, router);
         _host = host;
         _router = router;
+        _loadout = loadout;
         return router;
     }
 
@@ -207,6 +210,25 @@ public sealed class BbSummonerModule
 
     /// <summary>Greater Quintessence of Presence, the only rune the summoner scripts read (<c>HasRune5378</c>).</summary>
     private const int PresenceQuintessenceRuneId = 5378;
+
+    /// <summary>
+    /// Batch 841: the summoner scripts' <c>SpellUpdateTooltip</c> (1.0.0.132; 126 ships none) for the hero's two slots. The 132 tooltips show
+    /// what the hook writes (Clairvoyance's and Smite's <c>@f2@</c> is the 70, or 70 x (1 - SummonerCooldownBonus) with Mastermind: the
+    /// same literal and branch as their <c>AdjustCooldown</c>, which is what the cast starts). A slot whose script has no such hook gets no
+    /// binding from here.
+    /// </summary>
+    public void UpdateTooltips(Entity hero)
+    {
+        if (_loadout?.OwnerFor(hero) is not { } owner) return;
+        for (var slot = 0; slot < 2; slot++)
+        {
+            var name = SpellName(hero, slot);
+            if (name.Length == 0 || _scripts.FindOrShipped(name)?.Event("SpellUpdateTooltip") is null) continue;
+            if (Binding(hero, slot, owner) is not { } binding) continue;
+            FillAvatarVars(hero);
+            RouterOrThrow.RunSpellUpdateTooltip(binding.Script, hero, slot, binding.Rank, binding);
+        }
+    }
 
     /// <summary><c>SelfExecute</c>: the cast frame of a summoner spell (Flash's teleport, Heal's area, Clarity's mana).</summary>
     /// <remarks>
@@ -465,6 +487,16 @@ public sealed class BbSummonerModule
     public void Tick(double dt)
     {
         if (_host is null) return;
+        // Reconstruction (batch 841): when retail runs SpellUpdateTooltip is not recovered. Once a second, first on the module's first tick (the
+        // cadence the champions' own tooltip writes from UpdateSelfBuffActions have); a row is sent only when a value changes (SetSpellToolTipVar),
+        // so the level-scaled rows (Smite's damage, Heal's amount) follow a level-up within the second.
+        _tooltipClock -= dt;
+        if (_tooltipClock <= 0.0)
+        {
+            _tooltipClock = 1.0;
+            foreach (var hero in _host.Spells.World.Entities.Values.Where(unit => unit.UnitType == UnitType.Hero).ToArray())
+                UpdateTooltips(hero);
+        }
         // The channels already running take this step. A windup that reaches its cast frame inside this step starts its channel with
         // the time the step ran past the frame, so the channel is exactly ChannelDuration long whatever the step size (batch 179 review).
         _host.Channels.Tick(dt);

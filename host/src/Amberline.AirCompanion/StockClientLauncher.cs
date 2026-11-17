@@ -4,12 +4,26 @@ using System.Net.Sockets;
 
 namespace Amberline.AirCompanion;
 
-public sealed record MaestroCreateRequest(string ServerHost, int ServerPort, string SecurityKey, long PlayerId)
+/// <summary>
+/// The Maestro create payload, in two forms. A player's is "&lt;host&gt; &lt;port&gt; &lt;key&gt; &lt;summonerId&gt;" (the native game server). AIR's spectator launch
+/// is "spectator &lt;host&gt; &lt;key&gt; &lt;gameId&gt; &lt;platformId&gt;" (batch 849): <see cref="PlatformId"/> is then set, and the stock client reads the game
+/// from the local spectator grid on its fixed port, which the launch does not carry. A spectator's <see cref="ServerHost"/> is that grid's host,
+/// and its launch argument comes from the grid's constants, never from <see cref="ServerHost"/>.
+/// </summary>
+public sealed record MaestroCreateRequest(string ServerHost, int ServerPort, string SecurityKey, long PlayerId, string? PlatformId = null)
 {
+    /// <summary>The local spectator grid's host, which the stock client's spectator launch names (design B3, C3).</summary>
+    private const string SpectatorGridHost = "127.0.0.1";
+    /// <summary>The stock client's fixed spectator grid port; a spectator launch never carries it.</summary>
+    internal const int SpectatorGridPort = 8088;
+
+    public bool IsSpectator => PlatformId is not null;
+
     public static MaestroCreateRequest Parse(string payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
         var fields = payload.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length > 0 && fields[0] == "spectator") return ParseSpectator(fields);
         if (fields.Length != 4)
             throw new FormatException("A Maestro create payload must contain server host, port, key and player ID.");
 
@@ -27,7 +41,29 @@ public sealed record MaestroCreateRequest(string ServerHost, int ServerPort, str
         return new MaestroCreateRequest(host, port, fields[2], playerId);
     }
 
-    public string ToGameArgument() => $"{ServerHost} {ServerPort} {SecurityKey} {PlayerId}";
+    private static MaestroCreateRequest ParseSpectator(string[] fields)
+    {
+        // The stock client reads the launch as mode, host, key, game ID and platform ID. Each
+        // field is checked against what the client can use; a refusal names the field and never echoes the key.
+        if (fields.Length != 5)
+            throw new FormatException("A spectator launch must contain the host, key, game ID and platform ID after the word spectator.");
+        // NOT RETAIL: retail's spectator launch named the publisher's public spectator host (design C8). This PC's own grid is the only host here.
+        if (fields[1] != SpectatorGridHost)
+            throw new FormatException("The spectator host must be the local spectator grid, 127.0.0.1.");
+        // Standard base64 of 24 bytes: 32 characters, and '+' and '/' are normal in it (about two keys in three carry one).
+        if (fields[2].Length != 32 || !fields[2].All(character => char.IsAsciiLetterOrDigit(character) || character is '+' or '/'))
+            throw new FormatException("The spectator key must be 32 standard base64 characters.");
+        // The client keys its decryption with the game ID as a 32-bit long; the platform's key wrap keeps the same bound.
+        if (!long.TryParse(fields[3], out var gameId) || gameId is < 1 or > int.MaxValue)
+            throw new FormatException("The spectator game ID must be between 1 and 2147483647.");
+        if (fields[4].Length > 8 || !fields[4].All(character => char.IsAsciiDigit(character) || char.IsAsciiLetterUpper(character)))
+            throw new FormatException("The spectator platform ID must be 1 to 8 capital letters or digits.");
+        return new MaestroCreateRequest(SpectatorGridHost, SpectatorGridPort, fields[2], gameId, fields[4]);
+    }
+
+    public string ToGameArgument() => PlatformId is null
+        ? $"{ServerHost} {ServerPort} {SecurityKey} {PlayerId}"
+        : $"spectator {SpectatorGridHost} {SecurityKey} {PlayerId} {PlatformId}";
 }
 
 public sealed class StockClientLauncher
@@ -47,7 +83,9 @@ public sealed class StockClientLauncher
 
     public Process Launch(MaestroCreateRequest request)
     {
-        var process = Process.Start(CreateStartInfo(Executable, request with { ServerHost = GameAddress(request.ServerHost) }, MaestroPort));
+        // A spectator's host is the local grid, which its argument never reads from ServerHost, so it is not resolved.
+        var start = request.IsSpectator ? request : request with { ServerHost = GameAddress(request.ServerHost) };
+        var process = Process.Start(CreateStartInfo(Executable, start, MaestroPort));
         return process ?? throw new IOException("The stock game client could not be started.");
     }
 

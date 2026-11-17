@@ -47,6 +47,36 @@ public static class PlatformRatings
         return best == 0 ? StartingRating : (int)Math.Round((best + 2 * StartingRating) / 3.0, MidpointRounding.AwayFromZero);
     }
 
+    /// <summary>Batch 844: a ranked team's rating after each of its games of this queue type (TeamStatDetail.rating), oldest first.</summary>
+    public static IEnumerable<PlatformRating> TeamHistory(string teamId, IEnumerable<PlatformResult> receipts, string queueType) =>
+        receipts.Where(receipt => receipt.Teams is not null && PlatformGames.QueueOf(receipt.QueueId)?.Type == queueType)
+            .SelectMany(receipt => receipt.Teams!.Values.Where(side => side.TeamId == teamId && side.Rating is not null).Select(side => side.Rating!));
+
+    public static int TeamCurrent(string teamId, IEnumerable<PlatformResult> receipts, string queueType) =>
+        TeamHistory(teamId, receipts, queueType).LastOrDefault()?.After ?? StartingRating;
+
+    /// <summary>
+    /// Batch 844, a ranked team game: each team's rating change. Reconstruction (retail's team formula is not recovered; the client shows a
+    /// team's rating once it has played 5 games of a queue, TeamStatDetail.GAMES_PLAYED_FOR_RANKED_STATUS): the same Elo as the players', each
+    /// team one unit starting at 1200, K 64 for its first 5 games of the queue and 32 after; the winning side scores 1, whoever left.
+    /// </summary>
+    public static Dictionary<string, PlatformTeamSide> RateTeams(MatchResult result, IReadOnlyDictionary<string, PlatformTeamSide> sides,
+        IReadOnlyCollection<PlatformResult> earlier, string queueType)
+    {
+        if (sides.Count != 2) return [];
+        var before = sides.ToDictionary(side => side.Key, side =>
+            (Rating: TeamCurrent(side.Value.TeamId, earlier, queueType), Games: TeamHistory(side.Value.TeamId, earlier, queueType).Count()));
+        return sides.ToDictionary(side => side.Key, side =>
+        {
+            var (rating, games) = before[side.Key];
+            var other = before.First(pair => pair.Key != side.Key).Value.Rating;
+            var expected = 1 / (1 + Math.Pow(10, (other - rating) / 400.0));
+            var score = side.Key == result.Winner ? 1 : 0;
+            var k = games < PlatformAccounts.RankedTeamGames ? PlacementK : EstablishedK;
+            return side.Value with { Rating = new(rating, rating + (int)Math.Round(k * (score - expected), MidpointRounding.AwayFromZero)) };
+        });
+    }
+
     /// <summary>The rating change of every human seat of a finished ranked game, from the ratings the earlier receipts left.</summary>
     public static Dictionary<long, PlatformRating> Rate(MatchResult result, IReadOnlyDictionary<ulong, long> accountBySummoner,
         IReadOnlyCollection<PlatformResult> earlier, string queueType)

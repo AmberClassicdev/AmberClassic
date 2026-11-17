@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Security;
@@ -6,10 +7,12 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging;
 
 namespace Amberline.AirCompanion;
@@ -79,11 +82,16 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
     private readonly Uri websocketUri;
     private readonly Uri xmppWebsocketUri;
     private readonly byte[] certificateFingerprint;
-    // Set once, by the friend's login through the login queue, and read per tunnel connection: volatile, so readers never see a stale empty value.
+    // Set by the friend's login through the login queue, and read per tunnel connection: volatile, so readers never see a stale empty value.
     private volatile string bearer;
+    // Batch 854: whose bearer it is (RemoteSignIn.LoginKey), null when unknown (one from an invitation or an older cache).
+    private volatile string? bearerLogin;
     private readonly AirRemoteInvitation invitation;
     private readonly string? connectionsDirectory;
     private readonly SemaphoreSlim signInGate = new(1, 1);
+    private readonly object spectateGate = new();
+    private readonly ConcurrentDictionary<long, Task> spectateConnections = new();
+    private TcpListener? spectatePort;
     private readonly CancellationTokenRegistration cancellationRegistration;
     private long nextOperation;
     private Task? httpStopTask;
@@ -104,6 +112,7 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
         this.invitation = invitation;
         this.connectionsDirectory = connectionsDirectory;
         bearer = invitation.EffectiveToken;
+        if (connectionsDirectory is not null && bearer.Length != 0) bearerLogin = RemoteSignIn.CachedLogin(connectionsDirectory, invitation, bearer);
         remoteBase = new UriBuilder(Uri.UriSchemeHttps, invitation.Host, invitation.Port).Uri;
         websocketUri = new UriBuilder(Uri.UriSchemeWss, invitation.Host, invitation.Port, "/air/rtmp").Uri;
         xmppWebsocketUri = new UriBuilder(Uri.UriSchemeWss, invitation.Host, invitation.Port, "/air/xmpp").Uri;
@@ -139,6 +148,7 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
         await AwaitQuietly(Task.WhenAll(rtmpConnections.Values.ToArray())).ConfigureAwait(false);
         await AwaitQuietly(xmppLoop).ConfigureAwait(false);
         await AwaitQuietly(Task.WhenAll(xmppConnections.Values.ToArray())).ConfigureAwait(false);
+        await AwaitQuietly(Task.WhenAll(spectateConnections.Values.ToArray())).ConfigureAwait(false);
         await httpApp.DisposeAsync().ConfigureAwait(false);
         client.Dispose();
         rtmpSlots.Dispose();
@@ -151,6 +161,9 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
         _ = StopHttpAsync();
         try { rtmp.Stop(); } catch (ObjectDisposedException) { }
         try { xmpp.Stop(); } catch (ObjectDisposedException) { }
+        TcpListener? spectating;
+        lock (spectateGate) (spectating, spectatePort) = (spectatePort, null);
+        spectating?.Stop();
         foreach (var connection in acceptedClients.Values) connection.Dispose();
     }
 
@@ -261,19 +274,27 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
     /// <summary>
     /// NOT RETAIL: retail connects AIR straight to its RTMP and chat ports after the login-queue answer; this host carries them through
     /// a pinned tunnel that needs a bearer. The friend's login is that sign-in, so this signs in with the login AIR just posted, unless
-    /// a bearer is already live. The login is used for this one request and never logged; a refusal or a network failure is logged
-    /// without it, and the login-queue answer still goes to AIR.
+    /// a bearer of that same login is already live. The login is used for this one request and never logged; a refusal or a network failure
+    /// is logged without it, and the login-queue answer still goes to AIR (the earlier bearer, if any, stays).
+    /// Batch 854: the bearer follows the AIR login. Until then a live bearer of any login was kept, so a PC that signed in as X and logs in to
+    /// AIR as Y kept X's: RTMP and chat did not mind (they authenticate the AIR login inside the protocol), but the spectator route asks the
+    /// bearer's account and refused Y's spectating (403). A bearer whose login is unknown (an invitation's, an older cache's) is replaced once.
+    /// The same login keeps its bearer: the platform issues one token per account and replaces the earlier one (AirRemoteAccess.Issue).
     /// </summary>
     private async Task SignInFromLoginAsync(byte[] form, CancellationToken cancellationToken)
     {
         var credentials = RemoteSignIn.ReadLoginQueueForm(form);
-        if (credentials is null || bearer.Length != 0) return;
+        if (credentials is null) return;
+        var login = RemoteSignIn.LoginKey(credentials.Username);
+        if (bearer.Length != 0 && bearerLogin == login) return;
         await signInGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (bearer.Length != 0) return;
-            bearer = await RemoteSignIn.SignInAsync(client, invitation, connectionsDirectory, credentials, cancellationToken)
+            if (bearer.Length != 0 && bearerLogin == login) return;
+            var token = await RemoteSignIn.SignInAsync(client, invitation, connectionsDirectory, credentials, cancellationToken)
                 .ConfigureAwait(false);
+            bearerLogin = login;
+            bearer = token;
             Console.WriteLine("Remote AIR sign-in accepted; the RTMP and chat tunnels carry the account's bearer.");
         }
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.TooManyRequests)
@@ -431,6 +452,144 @@ public sealed class AirRemoteProxyHandle : IAsyncDisposable
         { Console.Error.WriteLine($"air.remote-xmpp-closed types={AirRemoteProxy.ExceptionTypeChain(error)}"); }
     }
 
+    /// <summary>
+    /// NOT RETAIL (batch 853, spectating S4b): the stock client started as a spectator downloads from 127.0.0.1:8088, fixed in the client
+    ///; retail's was the publisher's public spectator service, and here the grid is on the host's loopback. A
+    /// spectator launch first listens on this PC's <paramref name="port"/> (8088; checks pass a free one) and carries each request there to
+    /// the host's <c>/air/spectate</c> over the pinned HTTPS port with the account's bearer, as <see cref="ServeHttpAsync"/> carries AIR's
+    /// own. A port another program holds refuses the launch with a plain message (an <see cref="IOException"/>, which Maestro answers as a
+    /// failed start) and starts nothing. A player's launch is <paramref name="start"/> alone.
+    /// Batch 854: once open, the port stays until this tool ends (it closed with the game client before). AIR 1.52 asks
+    /// <c>endOfGameStats</c> at <c>observerServerIp:observerServerPort</c> right after a drop-in spectator's client ends
+    /// (SpectatorController.retrieveEndOfGameStats, from EndOfGameStatsController.activate), and AIR's reconnect relaunches at once; both
+    /// find the port still open.
+    /// </summary>
+    public Process Launch(MaestroCreateRequest request, Func<MaestroCreateRequest, Process> start, int port = MaestroCreateRequest.SpectatorGridPort)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(start);
+        if (!request.IsSpectator) return start(request);
+        OpenSpectatorPort(port, "Close that program, then spectate again.");
+        return start(request);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 854, batch 853 concern 2): the classic start. There the 2011 launcher's own Maestro starts the spectator client
+    /// (<c>ClassicStart</c>), so this tool never sees that launch: it opens the spectator port for the whole classic session instead, which
+    /// also covers AIR 1.52's end-of-game request after the client. A clash is one plain line (logged, and told through
+    /// <paramref name="refused"/>) and the session goes on: a player needs no 8088. False then.
+    /// </summary>
+    public bool ListenForSpectators(Action<string>? refused = null, int port = MaestroCreateRequest.SpectatorGridPort)
+    {
+        try
+        {
+            OpenSpectatorPort(port, "Spectating is off for this session: close that program, then start again to spectate.");
+            return true;
+        }
+        catch (IOException error)
+        {
+            refused?.Invoke(error.Message);
+            return false;
+        }
+    }
+
+    private void OpenSpectatorPort(int port, string advice)
+    {
+        lock (spectateGate)
+        {
+            ObjectDisposedException.ThrowIf(stop.IsCancellationRequested, this);
+            if (spectatePort is { } open && ((IPEndPoint)open.LocalEndpoint).Port == port) return;
+            spectatePort?.Stop();
+            spectatePort = null;
+            var listener = new TcpListener(IPAddress.Loopback, port);
+            try { listener.Start(16); }
+            catch (SocketException error)
+            {
+                var message = $"Spectating needs port {port} on this PC, and another program is using it ({error.SocketErrorCode}). " + advice;
+                Console.Error.WriteLine(message);
+                throw new IOException(message, error);
+            }
+            spectatePort = listener;
+            _ = AcceptSpectatorAsync(listener);
+        }
+    }
+
+    private bool SpectatorPortOpen(TcpListener listener)
+    {
+        lock (spectateGate) return ReferenceEquals(spectatePort, listener);
+    }
+
+    private async Task AcceptSpectatorAsync(TcpListener listener)
+    {
+        while (true)
+        {
+            TcpClient connection;
+            try { connection = await listener.AcceptTcpClientAsync(stop.Token).ConfigureAwait(false); }
+            // Closed (the companion ends, or a check's other port took over); a connection reset before its accept leaves the port listening.
+            catch (Exception error) when (error is OperationCanceledException or ObjectDisposedException or SocketException or InvalidOperationException)
+            {
+                if (stop.IsCancellationRequested || !SpectatorPortOpen(listener)) return;
+                continue;
+            }
+            var id = Interlocked.Increment(ref nextOperation);
+            acceptedClients[id] = connection;
+            var task = ServeSpectatorAsync(connection);
+            spectateConnections[id] = task;
+            _ = ObserveSpectatorAsync(id, connection, task);
+        }
+    }
+
+    private async Task ObserveSpectatorAsync(long id, TcpClient connection, Task task)
+    {
+        try { await task.ConfigureAwait(false); }
+        catch { }
+        finally
+        {
+            acceptedClients.TryRemove(id, out _);
+            spectateConnections.TryRemove(id, out _);
+            connection.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// One spectator request: the client's <c>GET &lt;path&gt; HTTP/1.0</c>, then the host's answer as HTTP/1.0 with its length and the close
+    /// the client reads to, as the host's grid answers. Only a consumer path's characters are carried (<see cref="AirRemoteProxy.IsSpectatorTarget"/>:
+    /// no dot, percent sign or query), so a request never reaches another route of the host.
+    /// </summary>
+    private async Task ServeSpectatorAsync(TcpClient connection)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        var stream = connection.GetStream();
+        if (await AirRemoteProxy.ReadRequestTargetAsync(stream, timeout.Token).ConfigureAwait(false) is not { } target) return;
+        var (status, type, body) = (target.Length == 0 ? 400 : 404, (string?)null, Array.Empty<byte>());
+        if (AirRemoteProxy.IsSpectatorTarget(target))
+        {
+            try
+            {
+                using var message = new HttpRequestMessage(HttpMethod.Get, new Uri(remoteBase, AirRemoteProxy.SpectatePath + target));
+                var token = bearer;
+                if (token.Length != 0) message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+                body = await ReadResponseAsync(response, timeout.Token).ConfigureAwait(false);
+                status = (int)response.StatusCode;
+                type = response.Content.Headers.ContentType?.ToString();
+            }
+            catch (Exception error) when (error is HttpRequestException or IOException or PayloadTooLargeException)
+            {
+                Console.Error.WriteLine($"air.remote-spectate-failed types={AirRemoteProxy.ExceptionTypeChain(error)}");
+                status = 502;
+                type = null;
+                body = [];
+            }
+        }
+        var head = $"HTTP/1.0 {status} {ReasonPhrases.GetReasonPhrase(status)}\r\n" + (type is null ? "" : $"Content-Type: {type}\r\n") +
+                   $"Content-Length: {body.Length}\r\nConnection: close\r\n\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(head), timeout.Token).ConfigureAwait(false);
+        await stream.WriteAsync(body, timeout.Token).ConfigureAwait(false);
+        connection.Client.Shutdown(SocketShutdown.Send);
+    }
+
     private static bool HttpMethodAllowed(string method) =>
         method.Equals("GET", StringComparison.OrdinalIgnoreCase) ||
         method.Equals("POST", StringComparison.OrdinalIgnoreCase);
@@ -481,6 +640,37 @@ public static class AirRemoteProxy
     private const int MaxWebSocketMessageBytes = 256 * 1024;
     /// <summary>The platform's <c>AirRemoteTunnel.GameAddressHeader</c>: the IPv4 address this PC reached the host at (spec §7).</summary>
     internal const string GameAddressHeader = "X-Game-Address";
+    /// <summary>NOT RETAIL (batch 853): the host's route for spectator requests, the platform's <c>AirRemoteTunnel.SpectatePath</c>.</summary>
+    internal const string SpectatePath = "/air/spectate";
+
+    /// <summary>
+    /// Batch 853: a stock spectator client's path: <c>[Replay] BaseRestServicePath</c> (default <c>/observer-mode/rest</c>), then
+    /// <c>/consumer/&lt;name&gt;/&lt;platformId&gt;/&lt;gameId&gt;[/&lt;n or id&gt;]/token</c> (design 845, B3): letters, digits, '/', '-' and '_' only.
+    /// </summary>
+    internal static bool IsSpectatorTarget(string target) =>
+        target.StartsWith("/observer-mode/rest/consumer/", StringComparison.Ordinal) && target.Length <= 256 &&
+        target.All(c => char.IsAsciiLetterOrDigit(c) || c is '/' or '-' or '_');
+
+    /// <summary>
+    /// The target of the client's request line <c>GET &lt;target&gt; HTTP/1.x</c> once the head has ended; "" for any
+    /// other request or a head over 4 KiB, null when the peer left first. The host's grid reads its own requests the same way.
+    /// </summary>
+    internal static async Task<string?> ReadRequestTargetAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[4096];
+        var count = 0;
+        while (count < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(count), cancellationToken).ConfigureAwait(false);
+            if (read == 0) return null;
+            count += read;
+            var text = Encoding.ASCII.GetString(buffer, 0, count);
+            if (!text.Contains("\n\r\n", StringComparison.Ordinal) && !text.Contains("\n\n", StringComparison.Ordinal)) continue;
+            return text[..text.IndexOf('\n')].TrimEnd('\r').Split(' ') is ["GET", var target, var version] &&
+                   version.StartsWith("HTTP/1.", StringComparison.Ordinal) ? target : "";
+        }
+        return "";
+    }
     /// <summary>The HTTPS client for the host: it accepts only the invitation's certificate and follows no redirects, cookies or proxies.</summary>
     internal static HttpClient CreatePinnedClient(byte[] fingerprint)
     {

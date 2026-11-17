@@ -91,7 +91,7 @@ public static class MapEconomyChecks
         // Batch 584: DeathTimes.inibin on map 8 ships DeathWaveRespawn*WaveRespawnInterval 12, which the client's shared
         // death timer manager (one manager per team) turns into respawn waves:
         // a death more than 12 s after the team's wave start opens a new wave, and every death of one wave respawns with the first.
-        var (combat, transport, heroes) = CreateDeathMatch(8);
+        var (combat, transport, heroes, _) = CreateDeathMatch(8);
         var (killer, a, b, c, d, chaos) = (heroes[0], heroes[1], heroes[2], heroes[3], heroes[4], heroes[5]);
         double Kill(Entity victim, Entity source, double at)
         {
@@ -109,7 +109,7 @@ public static class MapEconomyChecks
         TestAssert.Near(139.0, Kill(d, killer, 113.0), 1e-9, "13 s after it a new wave opens: 26 s, back at 139 s");
 
         // Summoner's Rift ships no interval: every death takes its full timer.
-        var (riftCombat, _, rift) = CreateDeathMatch(1);
+        var (riftCombat, _, rift, _) = CreateDeathMatch(1);
         Tick(riftCombat, from: 0.0, to: 100.0);
         riftCombat.ApplyHit(rift[0].NetId, rift[1].NetId, 100000.0, DamageType.True);
         Tick(riftCombat, from: 100.0, to: 105.0);
@@ -117,9 +117,10 @@ public static class MapEconomyChecks
         TestAssert.Near(12.0, rift[2].RespawnAt - riftCombat.CurrentTime, 1e-9, "map 1: a second death 5 s later still takes 12 s");
     }
 
-    private static (CombatService Combat, CombatChecks.TestTransport Transport, Entity[] Heroes) CreateDeathMatch(int mapId)
+    private static (CombatService Combat, CombatChecks.TestTransport Transport, Entity[] Heroes, WorldState World) CreateDeathMatch(int mapId,
+        params Team[] teams)
     {
-        // A Chaos killer, four Order heroes and a Chaos hero, all level 1 (map 8's timer is 26 at every level).
+        // A Chaos killer, four Order heroes and a Chaos hero unless the teams are given, all level 1 (map 8's timer is 26 at every level).
         var data = new GameData(GameDataPaths.Default.ForMap(mapId));
         var clock = new GameClock();
         clock.SetVirtual(0.0);
@@ -128,13 +129,143 @@ public static class MapEconomyChecks
         var stats = new HeroStatsService(data, new ItemCatalog(),
             new CombatChecks.LifecycleStatsHooks(), new CombatChecks.LifecycleStatsTransport());
         var combat = new CombatService(world, new CombatChecks.TestHooks(), transport, new FixedRandomSource(), stats, data);
-        var teams = new[] { Team.Chaos, Team.Order, Team.Order, Team.Order, Team.Order, Team.Chaos };
+        if (teams.Length == 0) teams = [Team.Chaos, Team.Order, Team.Order, Team.Order, Team.Order, Team.Chaos];
         var heroes = teams.Select((team, index) => new Entity((uint)(index + 1), EntityKind.Hero, UnitType.Hero, team, new Position2(0.0, 0.0))
         {
             Level = 1, MaxHealth = 500.0, Health = 500.0, MaxMana = 100.0, Mana = 100.0,
         }).ToArray();
         foreach (var hero in heroes) world.Register(hero);
-        return (combat, transport, heroes);
+        return (combat, transport, heroes, world);
+    }
+
+    /// <summary>
+    /// Batch 852: the 1.0.0.126 Crystal Scar's respawn adjustment by the nexus lead (CombatService.DominionLeadAdjustment, Reconstruction).
+    /// Riot's explanation (Brackhar, values live on 21 October 2011, "Dominion Respawn Explained", Surrender at 20, 25 October 2011): a lead of
+    /// 1 nexus health adds 2 s to the leading team's minimum respawn time (map 8's 26 s) and takes 2 s off the trailing team's; a lead of 50
+    /// makes it 3 s, of 100 4 s, and nothing more after that. V1.0.0.126 is the patch that cut the launch range (+5/-5) to these. Every death's
+    /// packet carries the timer it starts.
+    /// </summary>
+    [Check("combat.map-8-respawn-lead-tiers-add-two-three-or-four-seconds")]
+    public static void MapEightRespawnLeadTiersAddTwoThreeOrFourSeconds()
+    {
+        GameData.ConfigureDefault(GameDataPaths.Default.ForMap(GameMaps.CrystalScar));
+        try
+        {
+            foreach (var (orderHealth, chaosHealth, orderSeconds, chaosSeconds) in new[]
+            {
+                (500.0, 500.0, 26.0, 26.0), (501.0, 500.0, 28.0, 24.0), (549.0, 500.0, 28.0, 24.0), (550.0, 500.0, 29.0, 23.0),
+                (599.0, 500.0, 29.0, 23.0), (600.0, 500.0, 30.0, 22.0), (500.0, 800.0, 22.0, 30.0),
+            })
+            {
+                var match = new LeadMatch();
+                var what = $"Order nexus {orderHealth}, Chaos nexus {chaosHealth}";
+                match.Score(orderHealth, chaosHealth);
+                TestAssert.Near(orderSeconds, match.Kill(match.Order[0]), 1e-9, $"{what}: an Order death opens a wave of {orderSeconds} s");
+                match.Score(orderHealth, chaosHealth);
+                TestAssert.Near(chaosSeconds, match.Kill(match.Chaos[0]), 1e-9, $"{what}: a Chaos death opens a wave of {chaosSeconds} s");
+            }
+        }
+        finally
+        {
+            GameData.ConfigureDefault(GameDataPaths.Default);
+        }
+    }
+
+    /// <summary>
+    /// Batch 852: the same explanation widens only the leading team's 12 s window, by half of its adjustment (13, 13.5 and 14 s), and a death
+    /// in an open window respawns with the death that opened it. Reconstruction: the window and the adjustment are the ones the opening death
+    /// read, so a lead that the wave's own deaths move (each takes 2 nexus health) does not split the wave.
+    /// </summary>
+    [Check("combat.map-8-respawn-lead-widens-the-leaders-window-from-its-opening-death")]
+    public static void MapEightRespawnLeadWidensTheLeadersWindowFromItsOpeningDeath()
+    {
+        GameData.ConfigureDefault(GameDataPaths.Default.ForMap(GameMaps.CrystalScar));
+        try
+        {
+            foreach (var (orderHealth, seconds) in new[] { (501.0, 2.0), (550.0, 3.0), (600.0, 4.0) })
+            {
+                var match = new LeadMatch();
+                var window = 12.0 + seconds / 2.0;
+                match.Score(orderHealth, 500.0);
+                match.Kill(match.Order[0]);
+                match.At(30.0 + window - 0.1);
+                match.Score(orderHealth, 500.0);
+                match.Kill(match.Order[1]);
+                TestAssert.Near(match.Order[0].RespawnAt, match.Order[1].RespawnAt, 1e-9,
+                    $"a lead of {orderHealth - 500.0}: {window - 0.1} s after the wave opened the leader's {window} s window holds");
+                match.At(30.0 + window + 0.1);
+                match.Score(500.0, 500.0);
+                TestAssert.Near(26.0, match.Kill(match.Order[2]), 1e-9,
+                    $"a lead of {orderHealth - 500.0}: {window + 0.1} s after it a new wave opens and reads the lead again (now even: 26 s)");
+            }
+
+            var trailing = new LeadMatch();
+            trailing.Score(600.0, 500.0);
+            TestAssert.Near(22.0, trailing.Kill(trailing.Chaos[0]), 1e-9, "100 behind: 26 - 4 s");
+            trailing.At(41.9);
+            trailing.Score(600.0, 500.0);
+            trailing.Kill(trailing.Chaos[1]);
+            TestAssert.Near(trailing.Chaos[0].RespawnAt, trailing.Chaos[1].RespawnAt, 1e-9, "11.9 s later the trailing team's wave holds");
+            trailing.At(42.1);
+            trailing.Score(500.0, 600.0);
+            TestAssert.Near(30.0, trailing.Kill(trailing.Chaos[2]), 1e-9,
+                "12.1 s later a new wave opens (the trailing team's window stays 12 s) and reads the lead again: Chaos now 100 ahead, 30 s");
+
+            var moved = new LeadMatch();
+            moved.Score(550.0, 500.0);
+            TestAssert.Near(29.0, moved.Kill(moved.Order[0]), 1e-9, "a lead of 50 opens a wave of 29 s, read before the death's own 2 points");
+            TestAssert.Near(548.0, moved.OrderNexus.Health, 1e-9, "the death leaves a lead of 48 (the 2 s tier)");
+            moved.At(35.0);
+            TestAssert.Near(24.0, moved.Kill(moved.Order[1]), 1e-9, "5 s later the death joins the wave with its 3 s, not the 48 lead's 2 s");
+            moved.At(43.4);
+            moved.Kill(moved.Order[2]);
+            TestAssert.Near(moved.Order[0].RespawnAt, moved.Order[2].RespawnAt, 1e-9,
+                "13.4 s after the wave opened its 13.5 s window holds (a lead of 46 would give 13 s)");
+        }
+        finally
+        {
+            GameData.ConfigureDefault(GameDataPaths.Default);
+        }
+    }
+
+    /// <summary>
+    /// Batch 852: a map 8 death match at 30 s with three heroes a team and both nexuses (500 each, the LevelProp crystals); the process map is
+    /// map 8, so each champion death takes its 2 nexus health.
+    /// </summary>
+    private sealed class LeadMatch
+    {
+        private readonly CombatService _combat;
+        private readonly CombatChecks.TestTransport _transport;
+
+        public LeadMatch()
+        {
+            var (combat, transport, heroes, world) = CreateDeathMatch(8, Team.Order, Team.Order, Team.Order, Team.Chaos, Team.Chaos, Team.Chaos);
+            (_combat, _transport, Order, Chaos) = (combat, transport, heroes[..3], heroes[3..]);
+            OrderNexus = world.Register(new Entity(world.Allocate(UnitType.Structure), EntityKind.Nexus, UnitType.Structure, Team.Order,
+                new Position2(1740.5343, 4480.0933)) { Health = 500, MaxHealth = 500, Name = "LevelProp_Odin_SOG_Order_Crystal" });
+            ChaosNexus = world.Register(new Entity(world.Allocate(UnitType.Structure), EntityKind.Nexus, UnitType.Structure, Team.Chaos,
+                new Position2(12163.1846, 4568.9819)) { Health = 500, MaxHealth = 500, Name = "LevelProp_Odin_SOG_Chaos_Crystal" });
+            Tick(combat, from: 0.0, to: 30.0);
+        }
+
+        public Entity[] Order { get; }
+        public Entity[] Chaos { get; }
+        public Entity OrderNexus { get; }
+        public Entity ChaosNexus { get; }
+
+        public void Score(double order, double chaos) => (OrderNexus.Health, ChaosNexus.Health) = (order, chaos);
+
+        public void At(double time) => _combat.CombatTick(time - _combat.CurrentTime, regenerate: false);
+
+        /// <summary>Kills <paramref name="victim"/> and returns its timer, which its death packet carries too.</summary>
+        public double Kill(Entity victim)
+        {
+            _combat.ApplyHit(0, victim.NetId, 100000.0, DamageType.True);
+            TestAssert.False(victim.Alive, $"hero {victim.NetId} dies");
+            var seconds = victim.RespawnAt - _combat.CurrentTime;
+            TestAssert.Near(seconds, _transport.LastDeathSeconds, 1e-9, $"hero {victim.NetId}: the death packet carries the timer it starts");
+            return seconds;
+        }
     }
 
     [Check("combat.map-4-absent-ambient-experience-keys-take-the-client-defaults")]

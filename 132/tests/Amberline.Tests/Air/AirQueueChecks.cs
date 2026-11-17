@@ -49,8 +49,9 @@ public static class AirQueueChecks
 
             // The stock play menu enables a leaf whose queue is listed; the ribbon appends each queue's name.
             var queues = ((ArrayCollection)rpc.Route("rpc", "matchmakerService", "getAvailableQueues", [])!).Cast<AsObject>().ToArray();
-            TestAssert.Equal(new object[] { 2d, 7d, 8d, 14d, 16d, 17d, 4d, 6d, 9d }, queues.Select(q => q["id"]).ToArray(),
-                "queues 2, 7, 8, 14, 16 and 17, then the ranked 4, 6 and 9 (batch 586), are listed (11, 18 and 19 retired by batch 805)");
+            TestAssert.Equal(new object[] { 2d, 7d, 8d, 14d, 16d, 17d, 4d, 6d, 9d, 42d, 41d }, queues.Select(q => q["id"]).ToArray(),
+                "queues 2, 7, 8, 14, 16 and 17, then the ranked 4, 6 and 9 (batch 586) and the Ranked Teams 42 and 41 (batch 844), are listed " +
+                "(11, 18 and 19 retired by batch 805)");
             TestAssert.True(queues.All(q => q["name"] is string { Length: > 0 }), "every queue has a name for 'Searching for Match:'");
             var coop = queues.Single(q => Equals(q["id"], 7d));
             TestAssert.Equal("BOT", coop["type"], "GameQueueManager.getQueues lists BOT queues under Co-op vs. AI");
@@ -58,7 +59,7 @@ public static class AirQueueChecks
             TestAssert.Equal(5d, coop["numPlayersPerTeam"]);
             TestAssert.Equal(new object[] { 1d }, ((ArrayCollection)coop["supportedMapIds"]).Cast<object>().ToArray());
             var login = (AsObject)rpc.Route("rpc", "clientFacadeService", "getLoginDataPacketForUser", [])!;
-            TestAssert.Equal(new object[] { 2d, 7d, 8d, 14d, 16d, 17d, 4d, 6d, 9d },
+            TestAssert.Equal(new object[] { 2d, 7d, 8d, 14d, 16d, 17d, 4d, 6d, 9d, 42d, 41d },
                 ((ArrayCollection)((AsObject)login["clientSystemStates"])["enabledQueueIdsList"]).Cast<object>().ToArray());
 
             AsObject Attach(string? difficulty) => (AsObject)rpc.Route("rpc", "matchmakerService", "attachToQueue",

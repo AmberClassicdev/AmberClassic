@@ -81,6 +81,9 @@ public sealed partial class DuelSession
         var output = new List<SessionOutboundPacket>();
         foreach (var seat in PresenceRecipients(who))
             output.AddRange(ToParticipant(seat, [packet]));
+        // Batch 847: the spectator's client prints the same "has quit!" and "has reconnected!" lines. The channel-zero registry entries
+        // (BuildDisconnectNotice) are a connected client's roster and stay out of the stream.
+        Spectator?.Record(packet);
         return output;
     }
 

@@ -71,10 +71,10 @@ public static class BbCorkiChecks
     }
 
     // ------------------------------------------------------------------------------------------------------------
-    // Phosphorus Bomb: an area with a four-second reveal
+    // Phosphorus Bomb: an area with a reveal of six seconds on 1.0.0.132 (owner decision 17 November 2026; the shipped reveal was four)
     // ------------------------------------------------------------------------------------------------------------
 
-    [Check("scripting.bb-corki-phosphorus-bomb-hurts-the-area-only-and-reveals-for-four-seconds")]
+    [Check("scripting.bb-corki-phosphorus-bomb-hurts-the-area-only-and-reveals-for-six-seconds")]
     public static void PhosphorusBombHurtsTheAreaOnly()
     {
         using var match = new Match("Corki", foeChampion: "Orianna");
@@ -93,9 +93,33 @@ public static class BbCorkiChecks
         TestAssert.Near(expected, foeBefore - foe.Health, 1.5, "the foe in the area takes the rank-one blast (magic, the ratio of ability power)");
         TestAssert.Equal(allyBefore, ally.Health, "an ally in the area takes nothing");
         TestAssert.Equal(farBefore, farFoe.Health, "a unit outside the area takes nothing");
-        TestAssert.True(Buff(match.Hero, "PhosphorusBomb") is not null, "the caster carries the bomb's buff for its four seconds");
-        match.Advance(4.0);
-        TestAssert.True(Buff(match.Hero, "PhosphorusBomb") is null, "the buff ends after four seconds");
+        // 1.0.0.132 (owner decision 17 November 2026; wiki 129.09): the reveal lasts six seconds. The shipped caster buff ran 4 s and its
+        // OnBuffDeactivate removes the perception bubble (added for 6 s) with it; the 132 seam (BbScriptOverridesLine) loads 6 into that buff.
+        TestAssert.True(Buff(match.Hero, "PhosphorusBomb") is not null, "the caster carries the bomb's buff for its six seconds");
+        TestAssert.Equal(1, match.Runtime.World.TimedVisionBubbles.Count(bubble => bubble.Team == match.Hero.Team && bubble.Radius == 375.0),
+            "the caster's team sees the point through one perception bubble of radius 375 (BBAddPosPerceptionBubble)");
+        match.Advance(4.9);
+        TestAssert.True(Buff(match.Hero, "PhosphorusBomb") is not null, "the buff is still up at five seconds (the shipped reveal ended at four)");
+        TestAssert.Equal(1, match.Runtime.World.TimedVisionBubbles.Count(bubble => bubble.Team == match.Hero.Team && bubble.Radius == 375.0),
+            "and the bubble still reveals at five seconds");
+        match.Advance(1.5);
+        TestAssert.True(Buff(match.Hero, "PhosphorusBomb") is null, "the buff ends after six seconds");
+        TestAssert.Equal(0, match.Runtime.World.TimedVisionBubbles.Count(bubble => bubble.Team == match.Hero.Team && bubble.Radius == 375.0),
+            "and the bubble goes with it (BBRemovePerceptionBubble)");
+    }
+
+    // The loader side of the owner's row: the shipped file's self buff runs 4 s and its bubble 6; the 132 seam loads 6 into the buff's literal.
+    // The 1.0.0.126 copy of this check pins the shipped 4 (its seam has no rows).
+    [Check("scripting.p132-phosphorus-bomb-reveal-seam-loads-six-seconds")]
+    public static void PhosphorusBombRevealSeamLoadsSixSeconds()
+    {
+        var row = BbScriptOverrides.Rows.Single(item => item.Script == "PhosphorusBomb");
+        TestAssert.Equal([4.0], row.Shipped, "the row replaces the shipped script's four seconds");
+        TestAssert.Equal([6.0], row.Wiki, "with the owner's six (NOT RETAIL seam, owner decision 17 November 2026)");
+        var self = Blocks(Script("PhosphorusBomb"), "SelfExecute").Single(block => block.Function == "BBSpellBuffAdd");
+        TestAssert.Equal(6.0, self.Number("Duration")!.Value, "the loaded self buff runs six seconds");
+        var bubble = Blocks(Script("PhosphorusBomb"), "OnBuffActivate").Single(block => block.Function == "BBAddPosPerceptionBubble");
+        TestAssert.Equal(6.0, bubble.Number("Duration")!.Value, "the bubble the script adds lasts six seconds (unchanged)");
     }
 
     // ------------------------------------------------------------------------------------------------------------

@@ -173,11 +173,19 @@ public sealed class MapProgressionRules
     /// base less the time since the wave start, so every death of one wave respawns at the same moment (map 8: 26 s for the
     /// first, down to 14 s for one 12 s later). <paramref name="waveStart"/> is the team's wave start, updated in place.
     /// </summary>
-    public double DeathTime(int level, double missionElapsedSeconds, ref double waveStart)
+    public double DeathTime(int level, double missionElapsedSeconds, ref double waveStart) =>
+        DeathTime(level, missionElapsedSeconds, ref waveStart, 0.0, 0.0);
+
+    /// <summary>
+    /// Batch 833: the same with the server's adjustment of the minimum respawn time (<paramref name="flatSeconds"/>, added to the scaled base)
+    /// and of the window (<paramref name="extraWindowSeconds"/>, added to the interval): the Crystal Scar's nexus-lead rule
+    /// (CombatService.DominionLeadAdjustment).
+    /// </summary>
+    public double DeathTime(int level, double missionElapsedSeconds, ref double waveStart, double flatSeconds, double extraWindowSeconds)
     {
-        var deathTime = DeathTime(level, missionElapsedSeconds);
+        var deathTime = DeathTime(level, missionElapsedSeconds) + flatSeconds;
         if (WaveRespawnInterval <= 1e-5) return deathTime;
-        if (missionElapsedSeconds - WaveRespawnInterval > waveStart) waveStart = missionElapsedSeconds;
+        if (missionElapsedSeconds - (WaveRespawnInterval + extraWindowSeconds) > waveStart) waveStart = missionElapsedSeconds;
         return deathTime - (missionElapsedSeconds - waveStart);
     }
 

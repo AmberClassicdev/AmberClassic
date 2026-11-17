@@ -200,6 +200,9 @@ public static partial class AirDtos
             ("gameTypeConfigId", queue.ConfigId), ("numPlayersPerTeam", (double)queue.TeamSize),
             ("minimumParticipantListSize", queue.MinParty), ("maximumParticipantListSize", queue.PartyLimit),
             ("minLevel", queue.Ranked ? PlatformGames.RankedMinLevel : 1), ("maxLevel", 30), ("ranked", queue.Ranked),
+            // Batch 844: 1.52's GameQueueConfig.teamOnly, true for the Ranked Teams queues 42 and 41 (AirLine.RankedTeamQueues): the play menu
+            // offers their party leaf only to a team member (ChooseGameFlowViewController.as:245-262) and opens the team invite bay (:614).
+            ("teamOnly", queue.TeamOnly),
             ("supportedMapIds", AirWire.List(new object[] { (double)queue.MapId })))));
 
     public static AsObject SummonerCatalog()

@@ -1,4 +1,5 @@
 using Amberline.Core;
+using Amberline.Scripting.BuildingBlocks;
 using Amberline.Scripting.BuildingBlocks.Runtime;
 using Amberline.Simulation.Combat;
 
@@ -31,6 +32,22 @@ internal sealed partial class BbHookRouter
             var scope = NewScope(attacker, attacker, target, attacker, instance.SpellRank >= 1 ? instance.SpellRank : null, instance.InstanceVars);
             Run(instance.Script, "BuffOnPreAttack", scope, BuffFrame(instance, "BuffOnPreAttack", DamageSourceKind.Basic, inDamage: false));
         }
+    }
+
+    /// <summary>
+    /// <c>SpellUpdateTooltip</c>: the spell script writes its tooltip numbers (<c>BBSetSpellToolTipVar</c>). 1.0.0.132's summoner scripts carry
+    /// it (their tooltips read <c>@f1@</c> to <c>@f3@</c>, among them the cooldown <c>AdjustCooldown</c> starts; 126's read the inibin's
+    /// <c>@Cooldown@</c> and have no such hook). The scripts name their slot through <c>SlotNumberVar="SpellSlot"</c>, so the scope holds it.
+    /// Reconstruction (batch 841): the stock client has no SpellUpdateTooltip string, so the server runs it; when it runs is not recovered.
+    /// </summary>
+    public void RunSpellUpdateTooltip(BbScript script, Entity hero, int slot, int rank, BbLoadoutBinding? binding = null)
+    {
+        if (script.Event("SpellUpdateTooltip") is null) return;
+        var scope = NewScope(hero, hero, hero, hero, rank >= 1 ? rank : null, binding: binding);
+        scope.SpellVars = SpellVars(script);
+        scope.Vars["SpellSlot"] = (double)slot;
+        var position = new Position3(hero.Position.X, 0.0, hero.Position.Z);
+        Run(script, "SpellUpdateTooltip", scope, SpellFrame("SpellUpdateTooltip", script, hero, slot, rank, 0.0, position, position));
     }
 
     /// <summary>

@@ -409,6 +409,9 @@ public sealed partial class BotController
     {
         if (!TeamMapping.TryFromNative((int)team, out var side)) return [];
         var laneIndex = (int)Math.Round(lane);
+        var offRole = false;
+        HideOffRoleLane(hero, side, laneIndex, ref offRole);
+        if (offRole) return [];
         var minions = new List<Entity>();
         foreach (var other in _world.Entities.Values)
         {
@@ -418,6 +421,13 @@ public sealed partial class BotController
         }
         return minions;
     }
+
+    /// <summary>
+    /// The per-line role-lane hook of <see cref="NativeMinionsOf"/>: sets <paramref name="hidden"/> when the bot's own lane
+    /// <paramref name="lane"/> of <paramref name="side"/> is not the lane its role sends it to. Each line implements it in its own
+    /// <c>BotController.Line.cs</c>: 132 sends carries and supports bottom (batch 836), 126 the mirror, top (batch 851).
+    /// </summary>
+    partial void HideOffRoleLane(Entity hero, Team side, int lane, ref bool hidden);
 
     /// <summary>
     /// <c>GetHeroes(team)</c>: the side's own heroes, summons excluded (a bot's kill-hero task is

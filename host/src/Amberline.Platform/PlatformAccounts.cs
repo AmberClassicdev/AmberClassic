@@ -30,7 +30,10 @@ public sealed record DeletedAccount(long Id, string Username, string Summoner, D
 public enum DeleteOutcome { Deleted, NotFound, InGame }
 public sealed record PlatformResult(long GameId, Guid HostGameId, long[] Accounts, JsonElement Result,
     DateTimeOffset CompletedAt = default, int QueueId = 0,
-    Dictionary<long, PlatformReward>? Rewards = null, Dictionary<long, PlatformRating>? Ratings = null);
+    Dictionary<long, PlatformReward>? Rewards = null, Dictionary<long, PlatformRating>? Ratings = null,
+    // Batch 844: a ranked team game's two teams by side ("Order", "Chaos") with their team ratings; written only for such a game, so every
+    // other receipt stays as it was.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Dictionary<string, PlatformTeamSide>? Teams = null);
 /// <summary>A player's rating in a ranked game's queue before and after it (batch 586, <see cref="PlatformRatings"/>).</summary>
 public sealed record PlatformRating(int Before, int After);
 
@@ -48,9 +51,12 @@ public sealed partial class PlatformAccounts : IDisposable
 {
     // Retired (25 October 2026): no invitation is issued or accepted; the field only lets an older store load.
     // NOT RETAIL (batch 748; retail had no host-side delete): Deleted is written only once a login was deleted, so an older build still reads a store without one.
+    // Batch 844: Teams (the Ranked Teams, PlatformAccounts.Teams.cs) is written only once a team exists, so a store without one loads and
+    // is written as before.
     public sealed record State(long NextId, PlatformAccount[] Accounts, string[] Invitations, PlatformResult[] Results,
         int NextGameId = 1, PlatformRewardCode[]? RewardCodes = null, PlatformReport[]? Reports = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DeletedAccount[]? Deleted = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DeletedAccount[]? Deleted = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] PlatformTeam[]? Teams = null);
     private readonly object _gate = new();
     private readonly string _path;
     private readonly FileStream _lease;
@@ -378,6 +384,7 @@ public sealed partial class PlatformAccounts : IDisposable
             {
                 Accounts = [.. _state.Accounts.Where(a => a.Id != accountId)],
                 Deleted = [.. _state.Deleted ?? [], new DeletedAccount(account.Id, account.Username, account.Summoner, _time.GetUtcNow())],
+                Teams = TeamsWithout(accountId, _time.GetUtcNow()),
             });
             // Its Last seen goes too: the next write of last-seen.json leaves it out, and a start reads only live logins' times.
             _lastSeen.Remove(accountId);
@@ -768,8 +775,8 @@ public sealed partial class PlatformAccounts : IDisposable
             var authoritative = result.Result.Deserialize<MatchResult>(Json)
                 ?? throw new InvalidDataException("Result payload is empty.");
             ValidateResult(authoritative, result.Accounts);
-            if (File.Exists(HandoffPath(result.GameId)))
-                ValidatePendingResult(ReadHandoff(HandoffPath(result.GameId)), result, authoritative);
+            var handoff = File.Exists(HandoffPath(result.GameId)) ? ReadHandoff(HandoffPath(result.GameId)) : null;
+            if (handoff is not null) ValidatePendingResult(handoff, result, authoritative);
             var byAccount = result.Accounts.ToDictionary(id => id, Participant);
             var rewards = new Dictionary<long, PlatformReward>();
             var nextAccounts = _state.Accounts.ToArray();
@@ -797,7 +804,15 @@ public sealed partial class PlatformAccounts : IDisposable
                 ? PlatformRatings.Rate(authoritative, byAccount.ToDictionary(pair => (ulong)pair.Value.SummonerId, pair => pair.Key), _state.Results, ranked.Type)
                 : null;
             foreach (var gone in byAccount.Where(pair => pair.Value.Account is null)) ratings?.Remove(gone.Key);
-            var stored = result with { Rewards = rewards.Count == 0 ? null : rewards, Ratings = ratings is { Count: > 0 } ? ratings : null };
+            // Batch 844: a Ranked Teams game also rates its two teams (PlatformRatings.RateTeams), named by the handoff, which the live path and a
+            // recovered result both read.
+            var teams = handoff?.Teams is { } sides && PlatformGames.QueueOf(result.QueueId) is { TeamOnly: true } teamQueue
+                ? PlatformRatings.RateTeams(authoritative, sides, _state.Results, teamQueue.Type) : null;
+            var stored = result with
+            {
+                Rewards = rewards.Count == 0 ? null : rewards, Ratings = ratings is { Count: > 0 } ? ratings : null,
+                Teams = teams is { Count: > 0 } ? teams : null,
+            };
             Save(_state with { Accounts = nextAccounts, Results = [.. _state.Results, stored] });
             return true;
         }

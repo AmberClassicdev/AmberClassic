@@ -26,9 +26,13 @@ public static class AirProfileDtos
     // NOT RETAIL (batch 590), kept by batch 805: RankedSolo3x3, OdinRankedSolo and odinRankedPremade are summaries retail 126 never had. They
     // stay for the saved games of the retired queues 11, 18 and 19 (PlatformGames.RetiredRankedQueues): a player's records and ratings of
     // them still list. Nothing offers those queues any more.
+    // Batch 844: then the summaries of the line's Ranked Teams queues, RankedTeam5x5 and RankedTeam3x3 on 1.0.0.132 (PlayerStatSummaryType.as:22-24;
+    // the 1.52 profile reads them, ProfileStatsSummaryPresentationModel.as:87-88); none on 1.0.0.126.
     private static readonly string[] SummaryTypes =
         ["Unranked", "RankedSolo5x5", "RankedPremade5x5", "RankedPremade3x3", "RankedSolo3x3", "OdinUnranked", "OdinRankedSolo",
-            "odinRankedPremade", "CoopVsAI"];
+            "odinRankedPremade", "CoopVsAI", .. TeamSummaries];
+
+    private static IEnumerable<string> TeamSummaries => AirLine.RankedTeamQueues.Select(queue => SummaryType(queue.Type)!);
 
     /// <summary>
     /// PlayerStatSummaryType.convert: the summary a queue type's games count in. NORMAL and BOT share Unranked, Dominion's queues are
@@ -42,6 +46,9 @@ public static class AirProfileDtos
         "RANKED_PREMADE_5x5" => "RankedPremade5x5",
         "RANKED_PREMADE_3x3" => "RankedPremade3x3",
         "RANKED_SOLO_3x3" => "RankedSolo3x3",
+        // Batch 844: the Ranked Teams queue types (PlayerStatSummaryType.convert, 1.52 as:66-70).
+        "RANKED_TEAM_5x5" => "RankedTeam5x5",
+        "RANKED_TEAM_3x3" => "RankedTeam3x3",
         // The client's own spellings, odinRankedPremade with a lower-case o (PlayerStatSummaryType.DOMINION_RANKED_PREMADE). NOT RETAIL (batch
         // 590), kept by batch 805: the ranked types of the retired queues (RANKED_SOLO_3x3, ODIN_RANKED_*) stay converted, as their saved games name them.
         "ODIN_RANKED_SOLO" => "OdinRankedSolo",
@@ -148,7 +155,7 @@ public static class AirProfileDtos
 
     // NOT RETAIL (batch 590), kept by batch 805: RankedSolo3x3 stays for the saved TT solo games (PlatformGames.RetiredRankedQueues); they
     // still count in the CLASSIC statistics.
-    private static readonly string[] ClassicSummaries = ["Unranked", "RankedSolo5x5", "RankedPremade5x5", "RankedPremade3x3", "RankedSolo3x3"];
+    private static readonly string[] ClassicSummaries = ["Unranked", "RankedSolo5x5", "RankedPremade5x5", "RankedPremade3x3", "RankedSolo3x3", .. TeamSummaries];
 
     /// <summary>
     /// The wins, losses and leaves of a queue type's summary (Unranked without one) that the profile shows; the end-of-game screen prints

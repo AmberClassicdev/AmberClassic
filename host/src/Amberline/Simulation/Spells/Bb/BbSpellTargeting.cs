@@ -44,15 +44,18 @@ internal static class BbSpellTargeting
     }
 
     /// <summary>
-    /// Team and kind filter of an area scan, applied relative to the attacker (the native scan, shared by the
-    /// ForEachUnitInTargetArea family). Wards need an opt-in the scan flags do not carry, so they are never picked.
+    /// Team and kind filter of a line, a cone or an area, applied relative to the attacker. A line or a cone picks no ward. An area query
+    /// (<see cref="AreaGate"/>) picks a ward when its flags carry <c>AffectWards</c> (batch 841, see there).
     /// </summary>
-    public static bool Admits(Entity? attacker, Entity unit, HashSet<string> flags)
+    public static bool Admits(Entity? attacker, Entity unit, HashSet<string> flags) => Admits(attacker, unit, flags, areaQuery: false);
+
+    private static bool Admits(Entity? attacker, Entity unit, HashSet<string> flags, bool areaQuery)
     {
         // NotAffectSelf (SpellData*Flags): the caster is no victim of its own spell. Ezreal's Essence Flux wave passes through allied heroes and
         // carries the flag (EzrealEssenceFluxMissile: AffectEnemies | AffectFriends | AffectHeroes | NotAffectSelf); the area scan skipped it already.
         if (ReferenceEquals(unit, attacker) && flags.Contains("NotAffectSelf")) return false;
-        if (!ChampionSpellSupport.IsAreaEffectTarget(unit) && !(flags.Contains("AffectDead") && unit.UnitType != UnitType.Missile)) return false;
+        var candidate = ChampionSpellSupport.IsAreaEffectTarget(unit) || areaQuery && unit.IsWard && unit.Alive && flags.Contains("AffectWards");
+        if (!candidate && !(flags.Contains("AffectDead") && unit.UnitType != UnitType.Missile)) return false;
         if (!Targetable(attacker, unit, flags)) return false;
         if (!unit.Alive && !flags.Contains("AffectDead")) return false;
         var team = attacker is null ? unit.Team : attacker.Team;
@@ -106,11 +109,20 @@ internal static class BbSpellTargeting
     /// (batch 314). Its last test, the untargetable test (rescued by <c>AffectUntargetable</c>), ends in a type test, which answers 1 for any obj_AI_Base
     /// (the base-AI flag) and 3 for obj_Barracks (odd, so true), so an attacker passes it. Reconstruction: the component check before that
     /// (the object and its component) is not traced; the attacker has passed the targetable test already.
+    /// <para>
+    /// Batch 841: a ward is a candidate of an area query whose flags carry <c>AffectWards</c>, and the gate's ward clause (<see cref="WardOk"/>)
+    /// takes it. The shipped evidence is the 1.0.0.132 Spells/ResistantSkin.luaobj (130.42, Baron pushes wards away): its OnBuffActivate scans
+    /// 300 around the Baron with <c>AffectEnemies AffectMinions AffectWards</c> and the <c>SharedWardBuff</c> filter, a scan that exists only to
+    /// find wards, and moves each one away. Before, every ward failed the area-target test first, so the Baron's spawn never moved one.
+    /// The only other shipped scan with the flag is 132's SummonerOdinGarrison (its OdinGuardianBuff filter takes no ward); 126 has none.
+    /// Reconstruction: lines and cones keep refusing wards (<see cref="Admits(Entity?, Entity, HashSet{string})"/>); the inibin flags of the
+    /// attack spells and of Graves's Collateral Damage carry the bit, and nothing shipped says whether those reach a ward.
+    /// </para>
     /// </summary>
     private static bool AreaGate(Entity? attacker, Entity unit, HashSet<string> flags) =>
         ReferenceEquals(unit, attacker) && flags.Contains("AlwaysSelf")
             ? Targetable(attacker, unit, flags) && (unit.Alive || flags.Contains("AffectDead"))
-            : Admits(attacker, unit, flags);
+            : Admits(attacker, unit, flags, areaQuery: true);
 
     /// <summary>
     /// The team step of the client's shared target gate (team 300 is the literal 0x12c): a

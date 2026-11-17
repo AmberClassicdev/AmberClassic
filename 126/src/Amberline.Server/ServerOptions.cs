@@ -36,7 +36,9 @@ public sealed record ServerOptions(
     bool ManagedStatus = false,
     int MapId = 1,
     // Batch 669: the SynchVersion mode when it is not the map's own (GameMaps.IsPlayedIn): Battle Training is map 1 in TUTORIAL.
-    string? GameMode = null)
+    string? GameMode = null,
+    // Batch 847: the spectator stream's folder (SpectatorRecording.StreamSwitch, S1's contract); null records nothing.
+    string? SpectatorStream = null)
 {
     public const ushort DefaultPort = 5119;
     // Ten roster seats plus a new transport while a crashed seat is replaced.
@@ -150,6 +152,7 @@ public sealed record ServerOptions(
         var managedStatus = false;
         var mapId = result.MapId;
         var gameMode = result.GameMode;
+        string? spectatorStream = null;
         MatchPlayer[]? players = null;
 
         for (var index = 0; index < args.Count; index++)
@@ -211,13 +214,15 @@ public sealed record ServerOptions(
                 case "roster": players = MatchRoster.Read(value); break;
                 case "map-id": mapId = ParseInt(value, "--map-id"); break;
                 case "game-mode": gameMode = value; break;
+                case "spectator-stream": spectatorStream = value; break;
                 default: throw new ArgumentException($"Unknown option '--{name}'.");
             }
         }
 
         return new ServerOptions(bind, port, peerLimit, channelLimit, mode, order, chaos,
             speed, dataRoot, logDirectory, maxEvents,
-            visibilityBaseline, minionFidelity, validateOnly, players, launcherControl, managedStatus, mapId, gameMode).Validate();
+            visibilityBaseline, minionFidelity, validateOnly, players, launcherControl, managedStatus, mapId, gameMode,
+            spectatorStream).Validate();
     }
 
     public static string Usage() => """
@@ -246,6 +251,7 @@ public sealed record ServerOptions(
           --log-dir <path>               Structured session log directory.
           --max-events <1..1024>         Maximum native events per pump.
           --validate-only                 Build the production graph and load ENet, then exit.
+          --spectator-stream <folder>    Record the spectator stream there (chunk key in AMBERLINE_SPECTATOR_KEY).
           --help                         Show this help.
 
         The executable builds the maintained gameplay composition in-process.

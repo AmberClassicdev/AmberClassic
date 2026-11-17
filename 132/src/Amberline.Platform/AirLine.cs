@@ -42,4 +42,35 @@ public static class AirLine
     /// shown for RANKED_NUM_CHAMPS by RankedQueueFailuresDialog); 16 is the six bans and ten picks of <see cref="DraftMaxBans"/>.
     /// </summary>
     public const int RankedMinChampions = 16;
+
+    /// <summary>
+    /// Batch 844 (owner, 17 November 2026: implement Ranked Teams on 132): the Ranked Teams queues (wiki V1.0.0.129 "Ranked Teams now
+    /// available"). The 1.52 play menu has its own "Ranked Teams" leaves beside Solo/Duo (4/6) and the Twisted Treeline draft (11/9):
+    /// <c>&lt;queue soloid="-1" partyid="42"/&gt;</c> on Summoner's Rift and <c>partyid="41"</c> on the Twisted Treeline
+    /// (ChooseGameFlowViewLayoutDefinition.as:56-59, 72-75), QueueType RANKED_TEAM_5x5 / RANKED_TEAM_3x3 (QueueType.as:22-24), the bundle's
+    /// game name practiceGame_gameMode_RANKED_TEAM_GAME "Ranked Team Game". GameQueueConfig.teamOnly makes the leaf a team party: it needs
+    /// the team service and a team the summoner is a MEMBER of (ChooseGameFlowViewController.as:245-262), the invite bay lists only that team's
+    /// members (RankedTeamInviteBayRules) and the leader's attachTeamToQueue names the team (MatchMakerParams.teamId,
+    /// MasterGameViewController.as:670). The Start button of a RANKED_TEAM queue needs minimumParticipantListSize players
+    /// (CreateNormalArrangedGame.updateStartButton) and a smaller party gets QUEUE_DISABLED (joinQueue_attach), so a team plays with its full
+    /// side. Every Ranked leaf is draft_mode, at level 30 (Team.MIN_SUMMONER_LEVEL_FOR_RANKED_TEAMS). Reconstruction: the names.
+    /// The 1.0.0.126 line's copy is empty: AIR 1.45 has no team service.
+    /// </summary>
+    public static PlatformGames.QueueRule[] RankedTeamQueues =>
+    [
+        new(PlatformGames.RankedTeam5x5QueueId, "RANKED_TEAM_5x5", "RANKED_TEAM_GAME", PlatformStoreCalendar.NormalRiftMapId, 5,
+            "Ranked Team 5v5", "Ranked Team Game", AirGameDtos.DraftConfigId, Ranked: true, MinParty: 5, TeamOnly: true),
+        new(PlatformGames.RankedTeam3x3QueueId, "RANKED_TEAM_3x3", "RANKED_TEAM_GAME", PlatformStoreCalendar.TwistedTreelineMapId, 3,
+            "Ranked Team 3v3", "Ranked Team Game", AirGameDtos.DraftConfigId, Ranked: true, MinParty: 3, TeamOnly: true),
+    ];
+
+    /// <summary>
+    /// Batch 854 (spectating S5; owner, 17 November 2026: drop-in from the friends list, custom games only): AIR 1.52 spectates a friend's
+    /// running game from the friends list (BuddyListTreeRenderer.spectateGame, SpectatorController.spectateSummoner, gameService
+    /// retrieveInProgressSpectatorGameInfo, GameServiceImpl.as:197-204) and, after such a game, asks the grid for its end of game
+    /// (SpectatorController.retrieveEndOfGameStats). So a custom game that allows spectators records its stream from the launch, with
+    /// nobody in the spectator slots yet (<c>PlatformGames.Launch</c>). The 1.0.0.126 line's copy is false: AIR 1.45 has neither call
+    /// (design 845, B1).
+    /// </summary>
+    public static bool SpectatorDropIn => true;
 }

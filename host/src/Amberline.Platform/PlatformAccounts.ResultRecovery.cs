@@ -5,8 +5,11 @@ using Amberline.Server;
 
 namespace Amberline.Platform;
 
-/// <summary>Accounts are the human seats in roster order; Players are every seat, with any bot seats after the humans.</summary>
-public sealed record PlatformPendingMatch(int GameId, Guid HostGameId, int QueueId, long[] Accounts, MatchPlayer[] Players);
+/// <summary>Accounts are the human seats in roster order; Players are every seat, with any bot seats after the humans. Batch 844: Teams, a
+/// Ranked Teams game's two teams by side ("Order", "Chaos"), written only for such a game, so the result's team ratings survive a restart.</summary>
+public sealed record PlatformPendingMatch(int GameId, Guid HostGameId, int QueueId, long[] Accounts, MatchPlayer[] Players,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    Dictionary<string, PlatformTeamSide>? Teams = null);
 
 public sealed partial class PlatformAccounts
 {
@@ -20,10 +23,14 @@ public sealed partial class PlatformAccounts
             Path.GetFileNameWithoutExtension(path) != match.GameId.ToString(System.Globalization.CultureInfo.InvariantCulture) ||
             match.Accounts is null || match.Accounts.Length is < 1 or > MatchRoster.MaxPlayers || match.Players is null ||
             match.Players.Length < match.Accounts.Length || match.Players.Length > MatchRoster.MaxPlayers ||
-            match.Accounts.Distinct().Count() != match.Accounts.Length)
+            match.Accounts.Distinct().Count() != match.Accounts.Length || !ValidTeams(match.Teams))
             throw new InvalidDataException("Invalid saved match handoff.");
         return match;
     }
+
+    /// <summary>Batch 844: no teams, or one for each side, two different teams.</summary>
+    private static bool ValidTeams(Dictionary<string, PlatformTeamSide>? teams) => teams is null ||
+        (teams.Count == 2 && teams.ContainsKey("Order") && teams.ContainsKey("Chaos") && teams["Order"].TeamId != teams["Chaos"].TeamId);
 
     public void PrepareMatch(PlatformPendingMatch match)
     {
@@ -34,7 +41,7 @@ public sealed partial class PlatformAccounts
                 (match.QueueId != 0 && PlatformGames.QueueOf(match.QueueId) is null) || match.Accounts is null ||
                 match.Accounts.Length is < 1 or > MatchRoster.MaxPlayers || match.Players is null ||
                 match.Players.Length < match.Accounts.Length || match.Players.Length > MatchRoster.MaxPlayers ||
-                match.Accounts.Distinct().Count() != match.Accounts.Length)
+                match.Accounts.Distinct().Count() != match.Accounts.Length || !ValidTeams(match.Teams))
                 throw new ArgumentException("Invalid platform match handoff.");
             var players = MatchRoster.Validate(match.Players);
             for (var i = 0; i < players.Length; i++)

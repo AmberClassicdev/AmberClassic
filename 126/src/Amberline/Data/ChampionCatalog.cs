@@ -278,6 +278,9 @@ public static class ChampionCatalog
     /// </summary>
     public static IReadOnlyList<string> PlayableNames { get; } = PlayableRoster.Select(seat => seat.Name).ToArray();
 
+    /// <summary>The lane label of every <see cref="PlayableNames"/> champion, in the same order (the bot role lanes read it; no AIR client needed).</summary>
+    public static IReadOnlyList<(string Name, string Role)> PlayableRoles { get; } = PlayableRoster.Select(seat => (seat.Name, seat.Role)).ToArray();
+
     public static ChampionInfo? ById(int id) => _loaded.Value.ById.GetValueOrDefault(id);
 
     /// <summary>Case-insensitive; returns null for a name that is not a champion of the patch.</summary>

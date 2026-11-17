@@ -402,7 +402,7 @@ internal sealed class ProductionServices
                 // Zhonya pause state in addition to the AddBuff packet.
                 effects.EnsureBuffFx(entity, buff);
                 foreach (var (netId, name, bone) in BuffEffectService.PersistentVisuals(
-                             entity, buff, enemyObserver: observer.Team != entity.Team))
+                             entity, buff, enemyObserver: !observer.Allied(entity.Team)))
                 {
                     // Fresh effects retain ordinary queue order. Only restore
                     // an old effect that this observer missed while in fog.

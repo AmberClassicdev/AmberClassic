@@ -1035,6 +1035,9 @@ public static class BotControllerChecks
     {
         // The A8 audit (18 October 2026) deleted the server's home-lane rule: the only spread is the script's
         // 0.04 * (heroes - others on this lane) / heroes term, the random term and the active-lane bonus.
+        // Batch 836 (132 only): the role rule hides a bot's other lanes while its role lane has a minion, so they score 0
+        // (runtime.bots-role-lanes-follow-the-132-rule); its role lane still scores by this formula. The last Order bot is
+        // Yorick (top: L), the last Chaos bot Blitzcrank (support: R).
         var roster = CurrentTen.Select((champion, index) =>
             new SessionParticipantDefinition((ulong)index + 1, (uint)index,
                 $"Lane {index + 1}", champion, index < 5 ? Team.Order : Team.Chaos,
@@ -1067,8 +1070,18 @@ public static class BotControllerChecks
             var lastState = StateOf(runtime, last);
             TestAssert.True(teamSeats.All(seat => StateOf(runtime, seat.Hero!).Active is { Kind: BotTaskKind.PushLane }),
                 $"{team}: every bot takes a lane to push");
+            var roleSlot = MapDefinitions.Lanes.ToList().IndexOf(team == Team.Order ? "L" : "R");
+            TestAssert.True(EndsAt(last, minions[(team, roleSlot)].Position),
+                $"{team}: the last bot ({last.ChampionName}) follows its role lane's minion");
+            var roleLane = lastState.Active!.Lane;
             for (var lane = 0; lane < 3; lane++)
             {
+                if (lane != roleLane)
+                {
+                    TestAssert.Near(0.0, TaskOf(lastState, BotTaskKind.PushLane, lane).Priority, 1e-12,
+                        $"{team} lane {lane}: off the role lane, GetMinions answers none and the task scores 0");
+                    continue;
+                }
                 var others = teamSeats.Take(teamSeats.Length - 1).Count(seat =>
                     StateOf(runtime, seat.Hero!).Active is { Kind: BotTaskKind.PushLane } active && active.Lane == lane);
                 var distance = scanDistances[(team, lane)];
@@ -1085,6 +1098,58 @@ public static class BotControllerChecks
                     $"{priority} is outside [{withoutRandom}, {withoutRandom + 0.03}]");
             }
         }
+    }
+
+    [Check("runtime.bots-role-lanes-follow-the-132-rule")]
+    public static void RoleLanesSendCarriesAndSupportBottomTankTopMageMid()
+    {
+        // Batch 836, the wiki's V1.0.0.132 note: "The AD carry and support AI now go to the bottom lane while the tank and bruiser
+        // AI go to the top lane." A typical bot team (two AD carries, a support, a tank, a mage) with a friendly minion on every
+        // lane: each bot follows its role lane's minion, and its other lanes score 0. The lanes are named by letter (L top, C mid,
+        // R bottom), so a change of the script lane ids cannot swap top and bottom unnoticed.
+        string[] team = ["Ashe", "Sivir", "Soraka", "Malphite", "Annie"];
+        var expected = new Dictionary<string, string>
+        {
+            ["Ashe"] = "R", ["Sivir"] = "R", ["Soraka"] = "R", ["Malphite"] = "L", ["Annie"] = "C",
+        };
+        var roster = team.Select((champion, index) => new SessionParticipantDefinition((ulong)index + 2, (uint)index + 1,
+            $"Role {index + 1}", champion, Team.Chaos, IsBot: true))
+            .Prepend(new SessionParticipantDefinition(1, 0, "Human", "Ryze", Team.Order)).ToArray();
+        var runtime = Start(roster, 836, new AnnieChecks.FixedRandomSource(0.5));
+        var bots = runtime.Session.Participants.Where(seat => seat.IsBot).Select(seat => seat.Hero!).ToArray();
+        runtime.Bots!.Tick(0.0);
+        foreach (var bot in bots) Quiet(bot);
+        var minions = new[] { "L", "C", "R" }.ToDictionary(letter => letter, letter =>
+        {
+            var slot = MapDefinitions.Lanes.ToList().IndexOf(letter);
+            return AddFriendlyMinion(runtime, Team.Chaos, slot, RoutePoint(runtime, Team.Chaos, slot, 6));
+        });
+
+        Decide(runtime, 1.25);
+        foreach (var bot in bots)
+        {
+            var state = StateOf(runtime, bot);
+            TestAssert.True(state.Active is { Kind: BotTaskKind.PushLane } && EndsAt(bot, minions[expected[bot.ChampionName]].Position),
+                $"{bot.ChampionName} pushes lane {expected[bot.ChampionName]}: {Diag(runtime, bot, state)}");
+            TestAssert.True(state.Tasks.Where(task => task.Kind == BotTaskKind.PushLane && task.Lane != state.Active!.Lane)
+                    .All(task => task.Priority == 0.0),
+                $"{bot.ChampionName}: the lanes off its role score 0");
+        }
+
+        // While the role lane has no live friendly minion, the other lanes are visible again (the script's own spread), and the
+        // bot returns once its lane's next minion appears.
+        var soraka = bots.Single(bot => bot.ChampionName == "Soraka");
+        minions["R"].Alive = false;
+        Decide(runtime, 1.5);
+        var sorakaState = StateOf(runtime, soraka);
+        TestAssert.True(sorakaState.Active is { Kind: BotTaskKind.PushLane } &&
+                        sorakaState.Tasks.Count(task => task.Kind == BotTaskKind.PushLane && task.Priority > 0.0) == 2,
+            $"with no bottom minion Soraka pushes another lane: {Diag(runtime, soraka, sorakaState)}");
+        var slotR = MapDefinitions.Lanes.ToList().IndexOf("R");
+        var back = AddFriendlyMinion(runtime, Team.Chaos, slotR, RoutePoint(runtime, Team.Chaos, slotR, 6));
+        Decide(runtime, 1.75);
+        TestAssert.True(sorakaState.Active is { Kind: BotTaskKind.PushLane } && EndsAt(soraka, back.Position),
+            $"Soraka returns to the bottom lane's new minion: {Diag(runtime, soraka, sorakaState)}");
     }
 
     [Check("runtime.bots-retreat-regroup-and-heal-near-the-fountain")]

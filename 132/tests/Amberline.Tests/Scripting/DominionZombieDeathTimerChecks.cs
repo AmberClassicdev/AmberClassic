@@ -77,7 +77,11 @@ public static class DominionZombieDeathTimerChecks
             var end = runtime.Combat.CurrentTime;
             TestAssert.True(runtime.Combat.Kill(ally, killer.NetId) is false && !ally.Alive && ally.YorickRevival is null,
                 "a kill in the zombie life ends it (no second death)");
-            TestAssert.Near(end + 26.0, ally.RespawnAt, 1e-6, "the death timer starts at the life's end: map 8's 26 s");
+            // Batch 833 (V1.0.0.128, CombatService.DominionLeadAdjustment): the ally's death took 2 points off Order's nexus, so at the life's end
+            // Order trails and its minimum respawn time is 2 s shorter.
+            TestAssert.True(runtime.Combat.DominionNexusHealth(Team.Order) < runtime.Combat.DominionNexusHealth(Team.Chaos) - 1.0,
+                "the death's nexus loss leaves Order behind");
+            TestAssert.Near(end + 26.0 - 2.0, ally.RespawnAt, 1e-6, "the death timer starts at the life's end: map 8's 26 s, 2 s less for the trailing team");
         }
         finally
         {

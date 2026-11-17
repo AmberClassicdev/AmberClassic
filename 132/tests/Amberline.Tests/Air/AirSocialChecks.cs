@@ -175,6 +175,12 @@ public static partial class AirSocialChecks
             await a.SendAsync($"<message to='{Jid(bob)}' type='chat'><subject>PRACTICE_GAME_INVITE</subject><body>&lt;body&gt;&lt;gameId&gt;7&lt;/gameId&gt;&lt;/body&gt;</body></message>");
             var invite = await b.ReadUntilAsync("PRACTICE_GAME_INVITE");
             TestAssert.True(invite.Contains("gameId", StringComparison.Ordinal), "stock invite subject and XML body relay unchanged");
+            // Batch 844: the RT module's team notices (RTSendInviteCommand: a normal message to sum<id>@pvp.net, subject RANKED_TEAM_UPDATE,
+            // a RankedTeamXMLStanza body) relay the same way.
+            await a.SendAsync($"<message to='{Jid(bob)}' type='normal'><subject>RANKED_TEAM_UPDATE</subject><body>&lt;body&gt;&lt;msgType&gt;invited&lt;/msgType&gt;&lt;teamId&gt;TEAM-1&lt;/teamId&gt;&lt;teamName&gt;Blue Side&lt;/teamName&gt;&lt;/body&gt;</body></message>");
+            var teamNotice = await b.ReadUntilAsync("RANKED_TEAM_UPDATE");
+            TestAssert.True(teamNotice.Contains("type='normal'", StringComparison.Ordinal) && teamNotice.Contains("msgType", StringComparison.Ordinal) &&
+                teamNotice.Contains("TEAM-1", StringComparison.Ordinal), "a Ranked Teams notice relays with its type, subject and body");
 
             var room = "air-social-check@" + AirXmppHost.MucDomain;
             await a.SendAsync($"<presence to='{room}/Alice'><x xmlns='{AirXmppHost.MucNamespace}'/></presence>");

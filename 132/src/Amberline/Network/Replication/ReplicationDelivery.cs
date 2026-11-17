@@ -150,7 +150,7 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             RefreshManagedBallProjections();
             var teams = new HashSet<Team>();
             foreach (var team in _observers.Where(observer => observer.Ready)
-                         .Select(observer => observer.Team).Distinct())
+                         .SelectMany(TeamsOf).Distinct())
                 if (VisibilityRules.ProvidersReveal(Environment,
                         VisibilityRules.BuildTeamProviders(World, team, Balls, AdditionalProviders), position))
                     teams.Add(team);
@@ -203,7 +203,12 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             : null;
 
         foreach (var observer in active)
+        {
+            var clocked = SpectatorClock(observer);
             RefreshObserver(observer, ObserverState(observer, teamState));
+            if (observer.Spectator) SyncTeamMasks(observer, teamState);
+            SpectatorClocked(observer, clocked);
+        }
         _announcedPetSpawns.RemoveWhere(id => World.Get(id) is not { Alive: true });
         foreach (var entity in World.Entities.Values)
             if (entity.Alive && IsSpawnedAsPet(entity)) _announcedPetSpawns.Add(entity.NetId);
@@ -230,7 +235,11 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             }
             var routed = message is EffectCreateReplicationMessage create ? OnWire(create) : message;
             foreach (var observer in active)
+            {
+                var clocked = SpectatorClock(observer);
                 Route(routed, observer, teamState[observer.Team], oldVisible[observer]);
+                SpectatorClocked(observer, clocked);
+            }
         }
 
         RefreshLeeFollowDashes(active);
@@ -298,7 +307,11 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
             foreach (var packet in _deferredLeaves[observer])
                 Send(observer, packet);
 
-        if (active.Length > 0)
+        // Batch 847: the seats' views alone decide whether a unit is on the wire. The spectator's view knows every unit of both teams, so
+        // counting it would change what gameplay queues for the players of a game with a bot team (Created steers a script's cast through a
+        // temporary caster, BbChampionModule, and the status pushes); a recording never changes the game its players get.
+        var seats = active.Where(observer => !observer.Spectator).ToArray();
+        if (seats.Length > 0)
         {
             foreach (var entity in World.Entities.Values)
             {
@@ -308,11 +321,11 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
                 // turn an offline command corpus into a synthetic world
                 // visibility mutation merely because it was attached for
                 // packet capture.
-                if (active.All(observer => observer.View.VisibilityRefreshSuppressed))
+                if (seats.All(observer => observer.View.VisibilityRefreshSuppressed))
                     continue;
                 if (entity.Placemarker && !entity.Announced) continue;
-                entity.Created = active.Any(observer => observer.View.Known.Contains(entity.NetId));
-                entity.Visible = active.Any(observer => observer.View.Visible.Contains(entity.NetId));
+                entity.Created = seats.Any(observer => observer.View.Known.Contains(entity.NetId));
+                entity.Visible = seats.Any(observer => observer.View.Visible.Contains(entity.NetId));
             }
         }
         _pending.Clear();
@@ -325,6 +338,7 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
         // The spring is one flush's news: a trap sprung in this step is shown by this flush only (RefreshObserver), and its flag ends with it.
         foreach (var entity in World.Entities.Values) entity.SprungThisFlush = false;
         _springRevealed.Clear();
+        foreach (var observer in active) observer.Transport.Flushed();
         try { AfterVisibilityFlush?.Invoke(); }
         catch { /* diagnostics never affect observer delivery */ }
     }
@@ -526,7 +540,9 @@ public sealed partial class ReplicationDelivery : IReplicationIntentQueue
                 if (effect.EffectNetId != 0 && observer.View.Effects.Contains(effect.EffectNetId)) break;
                 if (CanRouteEffectCreate(effect, observer, teamState, routeVisible))
                 {
-                    var enemy = effect.EnemyPacket is not null && observer.Team != effect.AlliedTeam;
+                    // Batch 847: the spectator takes the allied variant of either team's effect. Reconstruction: which variant retail's
+                    // spectator stream carried is not recovered (the replay client has no local team).
+                    var enemy = effect.EnemyPacket is not null && !(effect.AlliedTeam is Team allied && observer.Allied(allied));
                     var effectPacket = effect.LivePacket?.Invoke(enemy) ??
                         (enemy ? effect.EnemyPacket! : effect.Packet);
                     // Batch 802: an effect at its point aimed at a unit this client never held (a stealthed trap) names no target here.

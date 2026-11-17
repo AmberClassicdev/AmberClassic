@@ -1,6 +1,7 @@
 using Amberline.Core;
 using Amberline.Data;
 using Amberline.Network.Sessions;
+using Amberline.Network.Spectator;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
 using RtmpSharp.IO;
@@ -154,7 +155,9 @@ public static partial class AirGameDtos
             ("optimisticLock", (double)g.Version), ("creationTime", g.Created.UtcDateTime),
             ("expiryTime", Math.Max(0, (g.Deadline - DateTimeOffset.UtcNow).TotalMilliseconds)), ("pickTurn", g.PickTurn), ("passwordSet", g.Password.Length > 0),
             // banOrder: no stock code reads it, so it stays empty; the bans the client shows are the line's ban field (Bans).
-            ("spectatorsAllowed", false), ("spectatorDelay", 0), ("observers", List([])), ("banOrder", List([])),
+            // Batch 848: spectatorDelay is the seconds AIR waits before it starts a spectator (SpectatorController.spectateGame), the grid's delay.
+            ("spectatorsAllowed", g.SpectatorsAllowed), ("spectatorDelay", (int)SpectatorGrid.Delay.TotalSeconds),
+            ("observers", List(g.Observers.Select(Observer))), ("banOrder", List([])),
             Bans(g), ("accountSpellsMap", List(g.Members.SelectMany(m => new object[] { (double)m.Account.Id, (double)m.Spell1, (double)m.Spell2 }))), ("terminatedCondition", g.TerminatedCondition),
             ("queuePosition", g.QueuePosition),
             ("ownerSummary", g.Members.FirstOrDefault(m => m.Account.Id == g.Owner) is { } owner ? Participant(g, owner, state) : null),
@@ -177,12 +180,42 @@ public static partial class AirGameDtos
         ("gameMap", AirDtos.MapFor(g.MapId)),
         ("team1Count", g.Members.Count(m => m.Team == Team.Order) + g.Bots.Count(b => b.Team == Team.Order)),
         ("team2Count", g.Members.Count(m => m.Team == Team.Chaos) + g.Bots.Count(b => b.Team == Team.Chaos)),
-        ("privateGame", g.Password.Length > 0), ("allowSpectators", "NONE"), ("spectatorCount", 0),
+        // Batch 848: the browser's Spectate button needs ALL (PracticeGameSearchResult.canSpectate) and a free slot (isSpectatorFull:
+        // spectatorCount against the system states' spectatorSlotLimit); its column shows "count/limit".
+        ("privateGame", g.Password.Length > 0), ("allowSpectators", g.SpectatorsAllowed ? "ALL" : "NONE"), ("spectatorCount", g.Observers.Count),
         ("owner", Participant(g, g.Members.First(m => m.Account.Id == g.Owner), g.State)));
+
+    /// <summary>
+    /// Batch 848: a spectator in the GameDTO's <c>observers</c>, a <c>GameObserver</c> (GameObserver.as: accountId, summonerId,
+    /// profileIconId, and GameParticipant's names). The client finds itself there by summonerName (GameDTO.getTeamNameForSummoner, team
+    /// "spectator"), so it then shows the spectator views.
+    /// </summary>
+    public static AsObject Observer(PlatformAccount account) => Object(AirProtocolNames.GameObserver,
+        ("accountId", (double)account.Id), ("summonerId", (double)account.SummonerId), ("summonerName", account.Summoner),
+        ("summonerInternalName", InternalName(account)), ("profileIconId", account.ProfileIconId));
+
+    /// <summary>
+    /// Batch 848: a spectator's start, the PlayerCredentialsDto AIR launches the spectator with (SpectatorController.startSpectating:
+    /// Maestro's "spectator &lt;observerServerIp&gt; &lt;key&gt; &lt;gameId&gt; &lt;platformId&gt;"). The key is the chunk key wrapped for the game
+    /// (<see cref="SpectatorChunk.WrapKey"/>), in the line's field (<see cref="ObserverKey"/>). No game server address: a spectator
+    /// downloads from the grid. NOT RETAIL: observerServerIp is loopback (retail named its public spectator service); the host's own
+    /// grid is there, and a friend's player tool carries it (S4b). observerServerPort is the client's fixed 8088 (1.52's end-of-game request
+    /// reads it). Reconstruction: playerId 0. NOT RETAIL (batch 854): handshakeToken is the literal <c>token</c>, the game client's own last
+    /// URL segment: AIR 1.52 puts it in the end-of-game URL (SpectatorController.retrieveEndOfGameStats), and no secret goes in a URL; the
+    /// grid asks the account instead (<see cref="SpectatorGrid.MayWatch"/>). Retail's per-spectator value is not recovered.
+    /// </summary>
+    public static AsObject ObserverCredentials(int gameId, string chunkKey)
+    {
+        var credentials = Object(AirProtocolNames.PlayerCredentialsDto, ("gameId", (double)gameId), ("playerId", 0d), ("serverIp", ""),
+            ("serverPort", 0), ("encryptionKey", ""), ("observer", true), ("observerServerIp", "127.0.0.1"),
+            ("observerServerPort", SpectatorGrid.Port), ("handshakeToken", "token"));
+        ObserverKey(credentials, SpectatorChunk.WrapKey(gameId, chunkKey));
+        return credentials;
+    }
 
     public static AsObject Results(PlatformGames.Lobby game, PlatformGames.Member viewer, PlatformReward? reward = null,
         PlatformEconomyRules? rules = null, Func<PlatformAccount, (int Wins, int Losses, int Leaves)>? record = null,
-        DateTimeOffset? now = null, PlatformRating? rating = null)
+        DateTimeOffset? now = null, PlatformRating? rating = null, (PlatformTeamSide Mine, PlatformTeamSide Other, bool Ranked)? team = null)
     {
         var result = game.Result ?? throw new InvalidOperationException("Match has no authoritative result.");
         var queue = game.Queue;
@@ -258,8 +291,72 @@ public static partial class AirGameDtos
         // queue's record above, reach 10 (EndOfGameStatsController.showRankedElo), and "Ranked (Unranked)" before.
         dto["elo"] = rating?.After ?? 0;
         dto["eloChange"] = rating is null ? 0 : rating.After - rating.Before;
+        // Batch 844: a Ranked Teams game, 1.52's EndOfGameStats.myTeamInfo, otherTeamInfo and myTeamStatus (sent for no other game).
+        // EndOfGameStatsView prints "Ranked" and, unless myTeamStatus is RANKED, "(Unranked)", else "(elo +change)" (as:3141-3160); the
+        // scoreboard puts each side's "[tag] " before its names (EndOfGameStatsController.as:508-517, 849-944). Reconstruction: elo is the
+        // team's rating, and the status RANKED once the team has played 5 games of this queue, from when the profile shows that rating
+        // (ProfileQueueSummaryView, TeamStatDetail.GAMES_PLAYED_FOR_RANKED_STATUS).
+        if (team is { } sides)
+        {
+            dto["myTeamInfo"] = AirTeamDtos.TeamInfo(sides.Mine);
+            dto["otherTeamInfo"] = AirTeamDtos.TeamInfo(sides.Other);
+            dto["myTeamStatus"] = sides.Ranked ? "RANKED" : "PROVISIONAL";
+            dto["elo"] = sides.Mine.Rating?.After ?? 0;
+            dto["eloChange"] = sides.Mine.Rating is { } change ? change.After - change.Before : 0;
+        }
         dto["difficulty"] = "";
         return dto;
+    }
+
+    /// <summary>
+    /// Batch 854 (spectating S5): AIR 1.52's spectator end of game, the SpectatorEndOfGameStats the grid serves
+    /// (<see cref="PlatformGames.SpectatorEndOfGame"/>). SpectatorController.retrieveEndOfGameStats reads it with
+    /// <c>readObject() as SpectatorEndOfGameStats</c>, so the object is the observer class
+    /// (<see cref="AirProtocolNames.SpectatorEndOfGameStats"/>; the statistics alias would read as null), and its rows and stats the
+    /// observer classes 1.52 registers beside it. No row is the viewer's: the client then shows the blue team first
+    /// (EndOfGameStatsController.as:475-499); here Order is the first team. A spectator earns nothing, so every reward is 0; the totals, the
+    /// first-win timer and the practice reset are the viewer's own, which the client shows and copies into its session (as:473-474).
+    /// Reconstruction: retail's spectator values.
+    /// </summary>
+    public static AsObject SpectatorResults(PlatformGames.Lobby game, PlatformAccount viewer, DateTimeOffset now, PlatformEconomyRules? rules = null)
+    {
+        var result = game.Result ?? throw new InvalidOperationException("Match has no authoritative result.");
+        var queue = game.Queue;
+        var economy = PlatformEconomy.For(viewer);
+        AsObject Row(PlayerMatchResult player)
+        {
+            var member = game.Members.FirstOrDefault(m => (ulong)m.Account.SummonerId == player.PlayerId);
+            var row = PlayerResult(game.Id, result, player, member?.Account.ProfileIconId ?? 0, member?.Account.Loadout.SummonerLevel ?? player.Level);
+            row.TypeName = AirProtocolNames.SpectatorPlayerParticipantStatsSummary;
+            foreach (AsObject stat in (System.Collections.IEnumerable)row["statistics"]) stat.TypeName = AirProtocolNames.SpectatorRawStatDTO;
+            return row;
+        }
+        var dto = Object(AirProtocolNames.SpectatorEndOfGameStats, ("gameId", (double)game.Id), ("userId", (double)viewer.SummonerId),
+            ("gameLength", AirWhole(result.DurationSeconds)), ("gameType", GameTypeOf(result.Mode, queue?.GameType ?? "PRACTICE_GAME")),
+            ("gameMode", result.Mode), ("queueType", queue?.Type ?? "NONE"), ("ranked", queue?.Ranked == true), ("invalid", false),
+            ("skinName", ""), ("skinIndex", 0d), ("leveledUp", false), ("newSpells", List([])), ("pointsPenalties", List([])),
+            ("difficulty", ""), ("elo", 0), ("eloChange", 0),
+            ("experienceTotal", WholeReward(economy.Experience, "experienceTotal")), ("ipTotal", WholeReward(economy.Ip, "ipTotal")),
+            ("expPointsToNextLevel", WholeReward(Math.Max(0, (rules ?? new PlatformEconomyRules()).ExperienceToNextLevel(economy.Level) - economy.Experience),
+                "expPointsToNextLevel")),
+            ("timeUntilNextFirstWinBonus", (double)Math.Max(0, PlatformEconomy.FirstWinAvailableAt(viewer) - now.ToUnixTimeMilliseconds())),
+            // The reward panel stays hidden (as for a normal queue game's results: practiceMinutesLeftToday -1).
+            ("practiceMinutesLeftToday", -1d),
+            ("teamPlayerParticipantStats", List(result.Players.Where(p => p.Team == "Order").Select(Row))),
+            ("otherTeamPlayerParticipantStats", List(result.Players.Where(p => p.Team != "Order").Select(Row))));
+        foreach (var field in new[] { "basePoints", "boostIpEarned", "boostXpEarned", "completionBonusPoints", "experienceEarned", "firstWinBonus",
+                     "ipEarned", "locationBoostIpEarned", "locationBoostXpEarned", "loyaltyBoostIpEarned", "loyaltyBoostXpEarned", "odinBonusIp",
+                     "practiceMinutesPlayedToday", "practiceMsecsUntilReset", "queueBonusEarned", "talentPointsGained" })
+            dto[field] = 0d;
+        return dto;
+    }
+
+    /// <summary>Batch 854: one AMF3 value as base64 text, what AIR 1.52 decodes from the grid (Base64Decoder, then ByteArray.readObject).</summary>
+    public static string Amf3Base64(object value)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new AmfWriter(buffer, new SerializationContext())) writer.WriteAmf3Item(value);
+        return Convert.ToBase64String(buffer.ToArray());
     }
 
     public static AsObject RecentGames(PlatformAccount account, IEnumerable<PlatformResult> receipts) =>

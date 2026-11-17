@@ -112,6 +112,13 @@ public sealed class BuiltinServerMatchFactory : IServerMatchFactory
                 });
         });
         runtime.SimulationSpeed = options.SimulationSpeed;
+        // Batch 847: the spectator stream, only when the Platform asked for one (S1's switch, the chunk key beside AMBERLINE_MATCH_KEY). A bad key
+        // or a folder that already holds a stream stops the server here, before any client connects.
+        if (options.SpectatorStream is { } stream)
+            Amberline.Network.Spectator.SpectatorRecorder.Attach(runtime, stream,
+                Environment.GetEnvironmentVariable(Amberline.Network.Spectator.SpectatorRecording.KeyVariable) ?? throw new ArgumentException(
+                    $"{Amberline.Network.Spectator.SpectatorRecording.StreamSwitch} needs the chunk key in {Amberline.Network.Spectator.SpectatorRecording.KeyVariable}."),
+                logger);
         var host = new LeagueEnetHost(options.Port, options.PeerLimit,
             options.ChannelLimit, options.BindAddress,
             maximumPacketSize: LeagueEnetHost.ProductionMaximumPacketSize,

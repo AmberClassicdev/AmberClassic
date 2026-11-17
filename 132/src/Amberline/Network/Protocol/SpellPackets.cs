@@ -376,6 +376,14 @@ public static class SpellPackets
         return Packet(stream, LeaguePacketReliability.Reliable, Hero(netId));
     }
 
+    /// <summary>
+    /// The entry slot of the summoner spellbook's slot 0 in <see cref="SpellTooltipVariables"/> (batch 841): selector 0x78 + n. The 132
+    /// ToolTipVars case sends a selector of 0x78 and above to the book the hero's vtable getter +0x22c returns, slot
+    /// selector - 0x78, where 0x3C to 0x77 go to the champion book at +0x1188. CharSetCooldown's body takes that same
+    /// getter for its summoner bit, so it is the summoner book.
+    /// </summary>
+    public const int SummonerTooltipSlot = 0x78 - 60;
+
     public static PlaintextPacket SpellTooltipVariables(
         IReadOnlyList<SpellTooltipEntry> entries, uint netId = 0)
     {

@@ -629,9 +629,12 @@ public sealed partial class CombatService : IEndOfGameEngine
         var championExperienceBase = championExperienceRecipients.Length == 0
             ? 0.0
             : _progression.ChampionKillExperienceBase(championExperienceVictimLevel);
+        var startsTimer = !becomesZombie || _progression.StartDeathTimerForZombies;
         var deathSeconds = unit.UnitType == UnitType.Hero
-            ? RespawnDuration(unit, startsTimer: !becomesZombie || _progression.StartDeathTimerForZombies)
+            ? RespawnDuration(unit, startsTimer)
             : CorpseReapSeconds;
+        // Batch 833: the timer this death starts is the value its death packet carries (ScheduleRespawn takes it, read once).
+        if (unit.UnitType == UnitType.Hero && startsTimer) _deathSecondsAtKill[unit.NetId] = (_time, deathSeconds);
         var firstBlood = false;
         var bounty = 0.0;
         if (unit.UnitType == UnitType.Hero && unit.OwnerNetId == 0 && creditedKiller is not null)

@@ -247,7 +247,7 @@ public static class BbOlafChecks
         TestAssert.Equal(0, match.Module.ScriptFailures.Count, "no script failed: " + Failures(match));
     }
 
-    [Check("scripting.bb-olaf-ragnarok-absorbs-the-first-physical-damage-and-lasts-five-seconds")]
+    [Check("scripting.bb-olaf-ragnarok-absorbs-the-first-physical-damage-and-lasts-six-seconds")]
     public static void RagnarokAbsorbsTwentyAndLastsFive()
     {
         using var match = Arena();

@@ -63,7 +63,7 @@ public static class ScriptedCampExperienceChecks
         var high = values["gcd_PercentEXPBonusMaximum"];
         double Bonus(Entity hero) => Math.Clamp(hero.LoadoutExperiencePercent, low, high);
         foreach (var camp in camps)
-        foreach (var monster in Members(runtime, camp))
+        foreach (var monster in Spawned(runtime, label, camp))
         {
             var near = heroes[0];
             var mid = heroes[1];
@@ -139,6 +139,18 @@ public static class ScriptedCampExperienceChecks
         runtime.World.Entities.Values
             .Where(entity => entity.Kind == EntityKind.Neutral && entity.CampId == camp)
             .OrderBy(entity => entity.NeutralMember).ToArray();
+
+    /// <summary>
+    /// Batch 841: the members of a camp once it has spawned. The match starts at 120 s, before the Dragon (150 s) and the Baron (900 s), whose
+    /// checks then looped over nothing and passed; the match now runs on to the camp's first spawn, and a camp that never comes is a failure.
+    /// </summary>
+    private static Entity[] Spawned(MatchRuntime runtime, string label, int camp)
+    {
+        for (var waited = 0; Members(runtime, camp).Length == 0 && waited < 900; waited += 10) runtime.Tick(10.0);
+        var members = Members(runtime, camp);
+        TestAssert.True(members.Length > 0, $"{label} camp {camp} has spawned");
+        return members;
+    }
 
     private static void Place(Entity hero, Entity monster, double offset) =>
         hero.Position = new Position2(monster.Position.X + offset, monster.Position.Z);

@@ -1377,6 +1377,26 @@ public static class ChampionReplayChecks
     }
 
 
+    /// <summary>
+    /// Case 11 with Hallucinate's teleport given its own draw. Its tape holds the same two uniform draws (fraction 0.35, the 28 September 2026
+    /// extension rule) for the clone's point (rows 0 and 1) and for Shaco's teleport (rows 2 and 3), so both stand on one point. Since batch 728
+    /// a teleport takes terrain correction only and lands on a unit's point, so the clone's pursuit began inside its owner's body on every build
+    /// (batch 778 on 132; batch 850 here). The draw order (clone point, then the teleport point) is the 132 build's HallucinateApplicator.luaobj,
+    /// OnBuffDeactivate pc 0139-0162 and 0330-0339; the 126 script is another build of the same file. The fixture stays as recorded (rows 2 and 3
+    /// are 0.35); the check reads them as 0.85, so the clone's pursuit starts outside Shaco and is held to the same body clearance.
+    /// </summary>
+    private static JsonElement WithOwnTeleportDraw(JsonElement testCase)
+    {
+        var node = JsonNode.Parse(testCase.GetRawText())!;
+        var calls = node["randomCalls"]!.AsArray();
+        foreach (var row in new[] { 2, 3 })
+        {
+            if ((string?)calls[row]!["kind"] != "uniform") throw new InvalidDataException($"case 11 random row {row} is not the teleport's uniform draw");
+            calls[row]!["fraction"] = 0.85;
+        }
+        return JsonDocument.Parse(node.ToJsonString()).RootElement.Clone();
+    }
+
     private static void VerifyShacoHallucinateCase(JsonElement testCase, int caseIndex,
         bool expireNaturally)
     {

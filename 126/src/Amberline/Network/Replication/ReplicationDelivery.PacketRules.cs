@@ -71,7 +71,8 @@ public sealed partial class ReplicationDelivery
     {
         if (message.OwnerHeroNetId != 0 && observer.HeroNetId != message.OwnerHeroNetId)
             return false;
-        if (message.AlliedTeam is Team allies && message.EnemyPacket is null && observer.Team != allies)
+        // Batch 847: the spectator counts as either team's ally (ReplicationObserver.Allied), so it gets each team's own effects.
+        if (message.AlliedTeam is Team allies && message.EnemyPacket is null && !observer.Allied(allies))
             return false;
         var dependencies = message.Packet.EntityReferences.Where(reference =>
             reference.Role != LeaguePacketEntityRole.Create &&
@@ -94,7 +95,7 @@ public sealed partial class ReplicationDelivery
         // create retail sent for a fogged unit. An effect whose bind or target the team sees keeps the sight rule (the client would draw it).
         // Reconstruction: which teams retail's server sent a bound effect to is not in the client; the script's own team is the one it names.
         if (actors.Any(reference => routeVisible.Contains(reference.NetId)) ||
-            message.BindNetId != 0 && message.FowTeam == observer.Team && actors.Any(reference => reference.NetId == message.BindNetId))
+            message.BindNetId != 0 && message.FowTeam is Team fow && observer.Allied(fow) && actors.Any(reference => reference.NetId == message.BindNetId))
             return true;
         // Batch 802: an effect on no bind aimed at a unit this team does not see is still shown to a team that sees its point. BantamTrapDetonate
         // creates ShroomMine.troy at the trap, aimed at the trap (BindObjectVar Nothing, PosVar and TargetObjectVar Owner), with Teemo's team as
@@ -104,7 +105,7 @@ public sealed partial class ReplicationDelivery
         // at a unit with no own sight of its point keeps the old rule (batch 690: it does not reach its own team through the target's fog).
         if (actors.Length > 0)
             return pointEffect && message.Position is Position2 point &&
-                   (message.CreationVisibleTeams?.Contains(observer.Team) == true ||
+                   (message.CreationVisibleTeams?.Any(observer.Allied) == true ||
                     VisibilityRules.ProvidersReveal(Environment, teamState.Providers, point));
         // Batch 473 (Reconstruction): an effect on no current unit reaches its own fog-of-war team (BBSpellEffectCreate's FOWTeam /
         // FOWTeamOverrideVar, else the placemarker cube it was bound to) wherever it stands, as a unit reaches its own team
@@ -112,8 +113,8 @@ public sealed partial class ReplicationDelivery
         // BBSpellEffectCreate parser is a stub, so the rule is read from the scripts, which name the
         // caster's team there (Rumble's Equalizer, Akali's smoke, Morgana's soil, Trundle's Contaminate). Before batch 473 a
         // ServerOnly cube's own 1350 sight hid the gap: Rumble's own client lost the far end of its carpet.
-        return message.FowTeam == observer.Team ||
-               message.CreationVisibleTeams?.Contains(observer.Team) == true ||
+        return message.FowTeam is Team fowTeam && observer.Allied(fowTeam) ||
+               message.CreationVisibleTeams?.Any(observer.Allied) == true ||
                message.Position is Position2 position &&
                VisibilityRules.ProvidersReveal(Environment, teamState.Providers, position);
     }

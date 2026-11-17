@@ -16,7 +16,7 @@ namespace Amberline.Tests.Network.Neutral;
 // (near at 250 units from the monster, mid at 500, far at 1500) and one Chaos hero at 1500, then kills every member of the camp type with
 // one hit from the mid hero, outside the 400: the near hero and the killer share the reward (the map's two-recipient share), the far hero
 // gets only the team's global experience (Worm), and the killer the monster's gold (its record's and what BBIncPermanentGoldReward added).
-public static class ScriptedCampExperienceChecks
+public static partial class ScriptedCampExperienceChecks
 {
     [Check("neutral.camp-experience.wraith")]
     public static void WraithCampsPayTheirShare() => AssertCampShares("Wraith", 3, 9);
@@ -181,7 +181,7 @@ public static class ScriptedCampExperienceChecks
         var chaos = runtime.Session.Participants.Single(participant => participant.Team == Team.Chaos).Hero!;
         var rules = MapProgressionRules.Load(GameData.Default.Paths);
         foreach (var camp in camps)
-        foreach (var monster in Members(runtime, camp))
+        foreach (var monster in Spawned(runtime, label, camp))
         {
             var near = heroes[0];
             var mid = heroes[1];
@@ -264,6 +264,18 @@ public static class ScriptedCampExperienceChecks
         runtime.World.Entities.Values
             .Where(entity => entity.Kind == EntityKind.Neutral && entity.CampId == camp)
             .OrderBy(entity => entity.NeutralMember).ToArray();
+
+    /// <summary>
+    /// Batch 841: the members of a camp once it has spawned. The match starts at 120 s, before the Dragon (150 s) and the Baron (900 s), whose
+    /// checks then looped over nothing and passed; the match now runs on to the camp's first spawn, and a camp that never comes is a failure.
+    /// </summary>
+    private static Entity[] Spawned(MatchRuntime runtime, string label, int camp)
+    {
+        for (var waited = 0; Members(runtime, camp).Length == 0 && waited < 900; waited += 10) runtime.Tick(10.0);
+        var members = Members(runtime, camp);
+        TestAssert.True(members.Length > 0, $"{label} camp {camp} has spawned");
+        return members;
+    }
 
     private static void Place(Entity hero, Entity monster, double offset) =>
         hero.Position = new Position2(monster.Position.X + offset, monster.Position.Z);

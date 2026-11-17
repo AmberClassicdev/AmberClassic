@@ -118,7 +118,8 @@ public sealed class AirFault : ArgumentException
         "Too many player slots for a custom game.", maximum);
     public static AirFault TooFewSlots(int minimum) => new(AirProtocolNames.NotEnoughPlayersException, "PG-0027",
         "Too few player slots for a custom game.", minimum);
-    public static AirFault SpectatorsDisabled() => new(InvalidGameState, "PG-0036", "Spectator setting refused: spectating is disabled.");
+    // Batch 848: also every spectating refusal (a lobby without spectators, a host whose spectator port is taken).
+    public static AirFault SpectatorsDisabled(string message = "Spectating is disabled for this game.") => new(InvalidGameState, "PG-0036", message);
     // Reconstruction: no PG text names these; the keys are the client's own resource texts. GEN-0004 'An unexpected error has
     // occurred' (a name or password the stock form cannot produce, such as a control character) and the create view's
     // 'Custom game creation is temporarily disabled. Please try again later.' (the lobby cap).

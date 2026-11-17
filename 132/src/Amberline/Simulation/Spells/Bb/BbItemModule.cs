@@ -158,6 +158,11 @@ public sealed class BbItemModule
         // augments 3196 / 3197 / 3198 renew ViktorHexCore every nine seconds (BuffOnSpellCast, BuffOnLevelUp: the CharVars the tooltips read)
         // and each augment its ViktorAugmentQ / W / E window every three (the spell changes of 131.05).
         3047, 3196, 3197, 3198, 3200,
+        // Batch 841, 127.21 (Hextech Gunblade's spell vamp is Unique): 1.0.0.132 ships Items/3146.luaobj (126 has none; its record carried the
+        // vamp). OnActivate adds the HextechGunblade buff when the owner has none, UpdateSelfBuffActions renews it every nine seconds
+        // (BUFF_REPLACE_EXISTING, ten seconds), and that buff's BuffOnUpdateStats (Spells/HextechGunblade.luaobj) is the 0.2
+        // IncPercentSpellVampMod: one buff however many copies. Left out of this set, the copy was never bound and no Gunblade gave any vamp.
+        3146,
     };
 
     /// <summary>Whether <paramref name="itemId"/> runs from its shipped script instead of the hand-written item code.</summary>

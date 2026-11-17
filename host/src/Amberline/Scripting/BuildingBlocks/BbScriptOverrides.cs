@@ -13,7 +13,7 @@ public static class BbScriptOverrides
 {
     public sealed record Row(string Script, string Table, string? DestVar, double[] Shipped, double[] Wiki, string Citation);
 
-    public static readonly IReadOnlyList<Row> Rows =
+    private static readonly Row[] SharedRows =
     [
         // Reconstruction: the script's 48.75 to 198.75 (four BBApplyDamage calls, one table) is older than the live value; the inibin
         // effect 2 and the tooltip say 60/105/150/195/240, as the wiki does from V1.0.0.118 until after 1.0.0.126.
@@ -40,6 +40,9 @@ public static class BbScriptOverrides
             [3.25], [3.0],
             "Cassiopeia/Patch_history V1.0.0.134: \"Ability power ratio reduced to (+ 80% AP) from (+ 90% AP).\" (three ticks of 0.3)"),
     ];
+
+    /// <summary>The shared rows and the rows of this patch line (<see cref="BbScriptOverridesLine"/>, the per-line seam).</summary>
+    public static readonly IReadOnlyList<Row> Rows = [.. SharedRows, .. BbScriptOverridesLine.Rows];
 
     /// <summary>The blocks of script <paramref name="script"/> with its rows applied (the same list when no row matches).</summary>
     public static IReadOnlyList<BbBlock> Apply(string script, IReadOnlyList<BbBlock> blocks)

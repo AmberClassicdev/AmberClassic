@@ -29,7 +29,8 @@ public static partial class AirDtos
 
     // The platform-wide switches the retail server flipped per deployment. The values are this host's, chosen for what it
     // implements; the client's reaction to each is in ApplicationController.handleLoginDataPacket.
-    // Reconstruction: observerModeEnabled / spectatorSlotLimit (no spectating),
+    // Batch 848: observerModeEnabled (the create box's "Allow Spectators", the browser's Spectate button and the lobby's spectator slots,
+    // ApplicationController.as:990-1034) and spectatorSlotLimit, the four slots (PlatformGames.SpectatorSlots). Reconstruction:
     // socialIntegrationEnabled (no Facebook), tribunalEnabled (on: the report dialog opens and reportPlayer is stored for
     // the host's /manage review), archivedStatsEnabled (Season One statistics are never kept) and queueThrottleDTO (no throttle; a capacity refusal exists separately in PlatformGames). Retail's per-deployment values for these switches are not recovered.
     // Reconstruction: minNumPlayersForPracticeGame = 1 (retail's 'custom games temporarily require a minimum of {0}
@@ -40,7 +41,7 @@ public static partial class AirDtos
     // default, so every key is sent. 1.45's freeToPlayRewardChampionIdList is no 1.52 field (assignProps never read it) and is gone.
     private static AsObject ClientSystemStates(PlatformEconomyRules? rules = null, IReadOnlySet<int>? disabled = null) => Json(ClientStatesAlias,
         ("practiceGameEnabled", true),
-        ("observerModeEnabled", false),
+        ("observerModeEnabled", true),
         // Batch 669: Battle Training runs (PlatformGames.CreateBattleTraining), so the client's own default, true (ClientSystemStatesNotification,
         // RiotApplication): after the basic tutorial the end-of-game screen offers it (EndOfGameStatsController.as:646-665).
         ("advancedTutorialEnabled", true),
@@ -49,7 +50,7 @@ public static partial class AirDtos
         ("socialIntegrationEnabled", false),
         ("tribunalEnabled", true),
         ("mucServiceEnabled", false),
-        ("spectatorSlotLimit", 0),
+        ("spectatorSlotLimit", PlatformGames.SpectatorSlots),
         ("archivedStatsEnabled", false),
         ("storeCustomerEnabled", true),
         ("clientHeartBeatRateSeconds", 60),
@@ -72,16 +73,21 @@ public static partial class AirDtos
         // updateClientSystemStates reads mode.toLowerCase() on null at login (ApplicationController.as:1136-1148). Level -1 with no mode
         // is no throttle: no message. Reconstruction: retail's no-throttle DTO is not recovered.
         ("queueThrottleDTO", AirWire.Object(AirProtocolNames.QueueThrottleDTO, ("level", -1))),
-        // The keys 1.52 adds. Off: Ranked Teams (teamServiceEnabled, ApplicationController.as:1124, 1359-1366) and the game-zone start
-        // (modularGameModeEnabled, as:1725-1727; createPracticeGame stays the start). Observer mode is off, so no game mode is observable
-        // (SpectatorController.as:306 knows ALL and DROPINONLY; Reconstruction: NONE for neither). The skins on sale (obtainable/unobtainable,
+        // The keys 1.52 adds. Batch 844 (owner, 17 November 2026): Ranked Teams on, teamServiceEnabled true, which loads the RT module
+        // (ApplicationController.updateClientSystemStates and loadSubsidiaryModules), shows the profile's Ranked Teams tab and enables the
+        // Ranked Teams leaves for a team member (AirLine.RankedTeamQueues; the platform routes summonerTeamService). Off: the game-zone start
+        // (modularGameModeEnabled, as:1725-1727; createPracticeGame stays the start). Batch 854: custom games are observable from the
+        // friends list (owner, 17 November 2026: drop-in for custom games only): only the drop-in reads these two
+        // (SpectatorController.canDropInSpectate, as:306, knows ALL and DROPINONLY; BuddyListTreeRenderer.as:224, 233), so ALL and
+        // DROPINONLY act alike here; ALL as design 845 C2 (Reconstruction). No queue is observable (observableGameModes empty: no matchmade
+        // drop-in). The lobby's spectator slots need only observerModeEnabled. The skins on sale (obtainable/unobtainable,
         // Inventory.updateChampionSkins) are the price list's (SkinsOnSale, batch 799). Batch 798, Reconstruction: the per-mode
         // inactive summoner spells (Inventory.isSpellDisabledForMode, as:900-923, which the spell picker greys with) are empty: the generated
         // catalogue's gameModes already keep each spell to its modes (AirGameDtos.SpellNamesFor), and retail's per-mode switches are not recovered.
-        ("teamServiceEnabled", false),
+        ("teamServiceEnabled", AirLine.RankedTeamQueues.Length > 0),
         ("modularGameModeEnabled", false),
         ("observableGameModes", AirWire.List(Array.Empty<object>())),
-        ("observableCustomGameModes", "NONE"),
+        ("observableCustomGameModes", "ALL"),
         ("inactiveTutorialSpellIdList", AirWire.List(Array.Empty<object>())),
         ("inactiveClassicSpellIdList", AirWire.List(Array.Empty<object>())),
         ("inactiveOdinSpellIdList", AirWire.List(Array.Empty<object>())),

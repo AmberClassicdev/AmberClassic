@@ -362,8 +362,31 @@ public static class AirRemoteChecks
         await using var second = await AirRemoteProxy.StartWithPortsAsync(cached!, FreePort(), FreePort(), FreePort(), stop.Token, connections);
         var reply = await PostLoginAsync(second.HttpPort, "friend_login", "correct-horse-1");
         TestAssert.Equal(HttpStatusCode.OK, reply.Status, "the login with a cached bearer succeeds");
-        TestAssert.Equal(1, platform.SignIns, "a cached bearer skips the sign-in: no second /air/remote-token request");
+        TestAssert.Equal(1, platform.SignIns, "a cached bearer of the same login skips the sign-in: no second /air/remote-token request");
         await TunnelCarriesBytesAsync(second.RtmpPort, rtmpBackend, stop.Token);
+        TestAssert.Equal(platform.Friend, platform.LastTunnelAccount, "the tunnel carries friend_login's bearer");
+
+        // Batch 854 (restated, batch 853 concern 1): the bearer follows the login AIR uses. Until then a cached bearer skipped the sign-in
+        // whoever logged in, so a PC that signed in as X and logged in to AIR as Y kept X's bearer, and the spectator route, which asks the
+        // bearer's account, refused Y (403). Another login signs in again and its bearer replaces the cached one; the same login still skips.
+        TestAssert.Equal(HttpStatusCode.OK, (await PostLoginAsync(second.HttpPort, "other_login", "correct-horse-2")).Status, "another login succeeds");
+        TestAssert.Equal(2, platform.SignIns, "another login signs in again");
+        await TunnelCarriesBytesAsync(second.RtmpPort, rtmpBackend, stop.Token);
+        TestAssert.Equal(platform.Other, platform.LastTunnelAccount, "a tunnel opened after it carries other_login's bearer");
+        TestAssert.False((await File.ReadAllTextAsync(Path.Combine(connections, "remote-token.json"))).Contains("other_login", StringComparison.Ordinal),
+            "the cache names whose bearer it is by a hash, never the login");
+        TestAssert.Equal(HttpStatusCode.OK, (await PostLoginAsync(second.HttpPort, "other_login", "correct-horse-2")).Status);
+        TestAssert.Equal(2, platform.SignIns, "other_login again keeps its bearer");
+        var third = await RemoteSignIn.TryCachedTokenAsync(invitation, connections, stop.Token);
+        await using (var restarted = await AirRemoteProxy.StartWithPortsAsync(third!, FreePort(), FreePort(), FreePort(), stop.Token, connections))
+        {
+            TestAssert.Equal(HttpStatusCode.OK, (await PostLoginAsync(restarted.HttpPort, "other_login", "correct-horse-2")).Status);
+            TestAssert.Equal(2, platform.SignIns, "after a restart the cache still knows the bearer is other_login's");
+            TestAssert.Equal(HttpStatusCode.OK, (await PostLoginAsync(restarted.HttpPort, "friend_login", "correct-horse-1")).Status);
+            TestAssert.Equal(3, platform.SignIns, "back to friend_login: signed in again");
+            await TunnelCarriesBytesAsync(restarted.RtmpPort, rtmpBackend, stop.Token);
+            TestAssert.Equal(platform.Friend, platform.LastTunnelAccount, "and its tunnels carry friend_login's bearer");
+        }
     }
 
     private static async Task PasswordNeverPersistedAsync()
@@ -438,6 +461,7 @@ public static class AirRemoteChecks
         private readonly PlatformAccounts accounts;
         private readonly WebApplication app;
         private int signIns;
+        private long lastTunnelAccount;
 
         private LoginPlatform(PlatformAccounts accounts, WebApplication app, int remotePort)
         {
@@ -450,11 +474,17 @@ public static class AirRemoteChecks
 
         public int SignIns => Volatile.Read(ref signIns);
 
+        /// <summary>Batch 854: the two logins' accounts, and the account of the last RTMP tunnel's bearer (0 before one).</summary>
+        public long Friend { get; private init; }
+        public long Other { get; private init; }
+        public long LastTunnelAccount => Interlocked.Read(ref lastTunnelAccount);
+
         public static async Task<LoginPlatform> StartAsync(string root, X509Certificate2 certificate, int rtmpPort, int chatPort,
             CancellationToken cancellationToken)
         {
             var accounts = new PlatformAccounts(root);
-            accounts.RegisterPublic("friend_login", "correct-horse-1", "Friend");
+            var friend = accounts.RegisterPublic("friend_login", "correct-horse-1", "Friend");
+            var other = accounts.RegisterPublic("other_login", "correct-horse-2", "Other");
             var sessions = new PlatformSessions(accounts);
             var access = new AirRemoteAccess(root);
             var remotePort = FreePort();
@@ -462,11 +492,14 @@ public static class AirRemoteChecks
             builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, remotePort,
                 listen => listen.UseHttps(certificate)));
             var app = builder.Build();
-            var platform = new LoginPlatform(accounts, app, remotePort);
+            var platform = new LoginPlatform(accounts, app, remotePort) { Friend = friend.Id, Other = other.Id };
             app.Use(async (context, next) =>
             {
                 if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path == AirRemoteTunnel.SignInPath)
                     Interlocked.Increment(ref platform.signIns);
+                if (context.Request.Path == AirRemoteTunnel.Path && context.Request.Headers.Authorization.ToString() is { Length: 71 } header &&
+                    access.AccountFor(header[7..]) is { } account)
+                    Interlocked.Exchange(ref platform.lastTunnelAccount, account);
                 await next(context);
             });
             app.MapPost(LoginPath, (Delegate)((HttpContext context) => Amberline.Platform.Program.AuthenticateAsync(context, accounts, sessions)));

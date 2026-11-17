@@ -159,7 +159,10 @@ public sealed class PlatformServices
                     var invitationId = parameters.TryGetValue("invitationId", out var invitation) && invitation is not null ? Text(invitation) : null;
                     var difficulty = parameters.TryGetValue("botDifficulty", out var botDifficulty) && botDifficulty is not null
                         ? Text(botDifficulty) : null;
-                    return games.AttachQueue(account, connection, queueIds, difficulty, team, invitationId);
+                    // Batch 844: 1.52's MatchMakerParams.teamId (a TeamId, or null outside a Ranked Teams party); 1.45 sends no such field.
+                    var teamId = parameters.TryGetValue("teamId", out var rankedTeam) && rankedTeam is not null
+                        ? Text(Field(Fields(rankedTeam), "fullId")) : null;
+                    return games.AttachQueue(account, connection, queueIds, difficulty, team, invitationId, teamId);
                 case ("matchmakerService", "acceptInviteForMatchmakingGame"):
                     // The invitee's accept of a party invitation (batch 579); its success handler reads only the call's token.
                     games.AcceptInvite(account, connection, S(0));
@@ -359,8 +362,25 @@ public sealed class PlatformServices
                 case ("gameService", "banUserFromGame"):
                     games.Kick(account.Id, N(0), N(1));
                     return null;
+                // Batch 848 (spectating S3): the lobby's spectator calls, the same on AIR 1.45 and 1.52 (GameServiceImpl.as).
+                case ("gameService", "observeGame"):
+                    return games.Observe(account, N(0), A(1) is null ? "" : S(1));
+                case ("gameService", "switchPlayerToObserver"):
+                    return games.SwitchToObserver(account.Id, N(0)); // Boolean, as switchTeams
+                case ("gameService", "switchObserverToPlayer"):
+                    return games.SwitchToPlayer(account.Id, N(0), N(1)); // Boolean, as switchTeams
+                case ("gameService", "banObserverFromGame"):
+                    games.BanObserver(account.Id, N(0), N(1));
+                    return null;
+                case ("gameService", "declineObserverReconnect"):
+                    games.StopSpectating(account.Id);
+                    return null;
                 case ("gameService", "retrieveInProgressGameInfo"):
                     return games.Reconnect(account.Id);
+                // Batch 854 (spectating S5): AIR 1.52's drop-in from the friends list (GameServiceImpl.spectateGameInProgress); AIR 1.45 has
+                // no such call, and the 1.0.0.126 line answers it as before (AirLine.SpectatorDropIn).
+                case ("gameService", "retrieveInProgressSpectatorGameInfo") when AirLine.SpectatorDropIn:
+                    return games.DropIn(account, S(0));
                 case ("gameService", "setClientReceivedGameMessage"):
                 case ("gameService", "setClientReceivedMaestroMessage"):
                     // Fire-and-forget audit pings: every stock call site passes no error handler, so a refusal here
@@ -369,11 +389,54 @@ public sealed class PlatformServices
                     if (S(1).Length > 64) throw new ArgumentException("Invalid acknowledgement.");
                     if (operation == "setClientReceivedGameMessage" && S(1) == "CHAMP_SELECT_CLIENT") games.AcknowledgeChampionSelect(account.Id, N(0));
                     return null;
+                // Batch 844: Ranked Teams, only on a line whose client has the team service (AirLine.RankedTeamQueues); the 1.0.0.126 line
+                // answers it as before.
+                case ("summonerTeamService", _) when AirLine.RankedTeamQueues.Length > 0:
+                    return TeamService(account, operation, args);
                 default:
                     throw new ArgumentException($"{destination}.{operation} is not implemented in this testing platform.");
             }
         }
         catch (RemoteFault fault) { throw new ArgumentException(fault.Message, fault); }
+    }
+
+    /// <summary>
+    /// Batch 844: summonerTeamService, the sixteen call sites of 1.52's TeamServiceImpl (all invokeServiceWithoutSession: the caller is the
+    /// connection's login). The RT module reads a TeamDTO from createTeam, findTeamBy*, kickPlayer, joinTeam, declineInvite, leaveTeam and
+    /// changeOwner (PlayerProxy, TeamProxy), a Player from createPlayer and findPlayer, a Boolean from doesNameExist and doesTagExist, and
+    /// nothing from invitePlayer and disbandTeam. A find that matches nothing answers null (the client's own "team could not be found").
+    /// leaveTeam has two arities: (teamId) and the captain's (newOwnerId, teamId) (TeamServiceImpl.ownerLeaveTeam). Refusals:
+    /// PlatformAccounts.Teams. The notices to the other players (invite, kick, join, leave, decline, new captain) are the clients' own chat
+    /// messages (RANKED_TEAM_UPDATE, RankedTeamXMLStanza), which the chat host relays as any direct message.
+    /// </summary>
+    private object? TeamService(PlatformAccount account, string operation, object?[] args)
+    {
+        object? A(int index) => index < args.Length ? args[index] : throw new ArgumentException("Missing RPC argument.");
+        string Team(int index) => Text(Field(Fields(A(index)), "fullId")) is { Length: > 0 and <= 64 } id ? id : throw new ArgumentException("Invalid team id.");
+        long Summoner(int index) => Integer(A(index));
+        AsObject? Dto(PlatformTeam? team) => team is null ? null : AirTeamDtos.Team(accounts, team);
+        switch (operation)
+        {
+            case "createPlayer": return AirTeamDtos.Player(accounts, account, own: true);
+            case "findPlayer":
+                var other = accounts.FindSummoner(Summoner(0)) ?? throw new AirFault(AirFault.GameException, "PLAYER_NOT_FOUND", "Player could not be found.");
+                return AirTeamDtos.Player(accounts, other, own: other.Id == account.Id);
+            case "doesNameExist": return accounts.FindTeamByName(Text(A(0))) is not null;
+            case "doesTagExist": return accounts.FindTeamByTag(Text(A(0))) is not null;
+            case "createTeam": return Dto(accounts.CreateTeam(account.Id, Text(A(0)), Text(A(1))));
+            case "findTeamById": return Dto(accounts.FindTeam(Team(0)));
+            case "findTeamByName": return Dto(accounts.FindTeamByName(Text(A(0))));
+            case "findTeamByTag": return Dto(accounts.FindTeamByTag(Text(A(0))));
+            case "invitePlayer": accounts.InviteToTeam(account.Id, Team(1), Summoner(0)); return null;
+            case "kickPlayer": return Dto(accounts.KickFromTeam(account.Id, Team(1), Summoner(0)));
+            case "joinTeam": return Dto(accounts.JoinTeam(account.Id, Team(0)));
+            case "declineInvite": return Dto(accounts.DeclineTeam(account.Id, Team(0)));
+            case "leaveTeam":
+                return Dto(args.Length >= 2 ? accounts.LeaveTeam(account.Id, Team(1), Summoner(0)) : accounts.LeaveTeam(account.Id, Team(0)));
+            case "changeOwner": return Dto(accounts.ChangeTeamOwner(account.Id, Team(1), Summoner(0)));
+            case "disbandTeam": accounts.DisbandTeam(account.Id, Team(0)); return null;
+            default: throw new ArgumentException($"summonerTeamService.{operation} is not implemented in this testing platform.");
+        }
     }
 
     // BotParticipant.teamId is the String form of Team.TEAM_ID_BLUE (100) or TEAM_ID_PURPLE (200).

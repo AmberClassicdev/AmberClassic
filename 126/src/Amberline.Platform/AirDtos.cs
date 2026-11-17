@@ -459,7 +459,8 @@ public static class AirDtos
 
     // The platform-wide switches the retail server flipped per deployment. The values are this host's, chosen for what it
     // implements; the client's reaction to each is in ApplicationController.handleLoginDataPacket.
-    // Reconstruction: observerModeEnabled / spectatorSlotLimit (no spectating),
+    // Batch 848: observerModeEnabled (the create box's "Allow Spectators", the browser's Spectate button and the lobby's spectator slots,
+    // ApplicationController.as:990-1034) and spectatorSlotLimit, the four slots (PlatformGames.SpectatorSlots). Reconstruction:
     // socialIntegrationEnabled (no Facebook), tribunalEnabled (on: the report dialog opens and reportPlayer is stored for
     // the host's /manage review), archivedStatsEnabled (Season One statistics are never kept) and queueThrottleDTO (null here; a capacity refusal exists separately in PlatformGames). Retail's per-deployment values for these switches are not recovered.
     // Reconstruction: minNumPlayersForPracticeGame = 1 (retail's 'custom games temporarily require a minimum of {0}
@@ -467,7 +468,7 @@ public static class AirDtos
     // mucServiceEnabled = false (the client then builds local rooms and joins them over the XMPP connection).
     private static AsObject ClientSystemStates(PlatformEconomyRules? rules = null, IReadOnlySet<int>? disabled = null) => AirWire.Object(ClientStatesAlias,
         ("practiceGameEnabled", true),
-        ("observerModeEnabled", false),
+        ("observerModeEnabled", true),
         // Batch 669: Battle Training runs (PlatformGames.CreateBattleTraining), so the client's own default, true (ClientSystemStatesNotification,
         // RiotApplication): after the basic tutorial the end-of-game screen offers it (EndOfGameStatsController.as:646-665).
         ("advancedTutorialEnabled", true),
@@ -476,7 +477,7 @@ public static class AirDtos
         ("socialIntegrationEnabled", false),
         ("tribunalEnabled", true),
         ("mucServiceEnabled", false),
-        ("spectatorSlotLimit", 0),
+        ("spectatorSlotLimit", PlatformGames.SpectatorSlots),
         ("archivedStatsEnabled", false),
         ("storeCustomerEnabled", true),
         ("clientHeartBeatRateSeconds", 60),

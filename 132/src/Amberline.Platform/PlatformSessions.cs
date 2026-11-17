@@ -296,9 +296,9 @@ public sealed class PlatformSessions(PlatformAccounts accounts, TimeProvider? cl
     }
 
     /// <summary>
-    /// DIAGNOSTICS: true when the account is logged in on a connection that reached this PC directly. From 24 to 26 October 2026 only
-    /// that seat could use the playtest cheat commands in an AIR match. Since 26 October every human seat may (owner), so no rule reads
-    /// it; ponytail: kept with its origin tracking so the host-only rule is a one-line change in PlatformGames.
+    /// True when the account is logged in on a connection that reached this PC directly. From 24 to 26 October 2026 only that seat could
+    /// use the playtest cheat commands in an AIR match (every human seat may since 26 October, owner). Batch 853: the spectator grid's rule
+    /// for a request made on this PC reads it (<c>PlatformGames.MaySpectate</c>).
     /// </summary>
     public bool IsLocalAccount(long accountId)
     {

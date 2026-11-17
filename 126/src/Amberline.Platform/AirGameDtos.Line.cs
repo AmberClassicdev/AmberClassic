@@ -33,4 +33,10 @@ public static partial class AirGameDtos
     /// <summary>The GameDTO's bans: 1.45's <c>bannedChampionIds</c>, the champion ids in ban order.</summary>
     private static (string Name, object? Value) Bans(PlatformGames.Lobby g) =>
         ("bannedChampionIds", List(g.BannedChampions.Select(ban => (object)ban.Champion)));
+
+    /// <summary>
+    /// Batch 848: a spectator's key goes in 1.45's <c>encryptionKey</c>, the field its SpectatorController.startSpectating hands Maestro
+    /// (SpectatorController.as:131-151); 1.45's PlayerCredentialsDTO has no observerEncryptionKey.
+    /// </summary>
+    private static void ObserverKey(RtmpSharp.IO.AsObject credentials, string key) => credentials["encryptionKey"] = key;
 }

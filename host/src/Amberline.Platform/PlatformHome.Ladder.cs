@@ -46,7 +46,7 @@ public static partial class PlatformHome
                     : $"placement {row.Wins + row.Losses}/{PlatformRatings.PlacementGames}") + $"</td><td>{row.Wins}</td><td>{row.Losses}</td></tr>");
             return $"<h2>{queue.Item2}</h2><table><thead><tr><th>#</th><th>Summoner</th><th>Rating</th><th>Wins</th><th>Losses</th></tr></thead>" +
                 $"<tbody>{string.Concat(rated)}</tbody></table>";
-        }));
+        })) + TeamLadders(accounts);
         var rows = everyone.Select(account =>
         {
             var (wins, losses) = (0, 0);
@@ -69,4 +69,26 @@ public static partial class PlatformHome
             </main></body></html>
             """;
     }
+
+    /// <summary>
+    /// Batch 844: one table per Ranked Teams queue of the line (<see cref="AirLine.RankedTeamQueues"/>; none on 1.0.0.126, whose page is
+    /// unchanged), as Riot's ladder ranked teams by their team rating. A team's rating shows once it has played
+    /// <see cref="PlatformAccounts.RankedTeamGames"/> games of the queue, and its placement count before, as the RT profile hides it
+    /// (ProfileQueueSummaryView); teams that have not played the queue are not listed.
+    /// </summary>
+    private static string TeamLadders(PlatformAccounts accounts) => string.Concat(AirLine.RankedTeamQueues.Select(queue =>
+    {
+        var rows = accounts.ListTeams().Select(team =>
+        {
+            var games = accounts.TeamGames(team.Id).Where(game => game.QueueType == queue.Type).ToArray();
+            return (Team: $"[{team.Tag}] {team.Name}", Rating: games.Length == 0 ? 0 : games[0].Side.Rating!.After,
+                Wins: games.Count(game => game.Win), Losses: games.Count(game => !game.Win), Placed: games.Length >= PlatformAccounts.RankedTeamGames);
+        }).Where(row => row.Wins + row.Losses > 0).OrderByDescending(row => row.Placed)
+        .ThenByDescending(row => row.Placed ? row.Rating : row.Wins + row.Losses).ThenBy(row => row.Team, StringComparer.OrdinalIgnoreCase)
+        .Select((row, index) => $"<tr><td>{index + 1}</td><td>{WebUtility.HtmlEncode(row.Team)}</td><td>" +
+            (row.Placed ? row.Rating.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : $"placement {row.Wins + row.Losses}/{PlatformAccounts.RankedTeamGames}") + $"</td><td>{row.Wins}</td><td>{row.Losses}</td></tr>");
+        return $"<h2>{WebUtility.HtmlEncode(queue.Name)}</h2><table><thead><tr><th>#</th><th>Team</th><th>Rating</th><th>Wins</th><th>Losses</th></tr></thead>" +
+            $"<tbody>{string.Concat(rows)}</tbody></table>";
+    }));
 }

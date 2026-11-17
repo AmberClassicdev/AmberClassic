@@ -25,8 +25,15 @@ public sealed partial class CombatService
         ArgumentNullException.ThrowIfNull(unit);
         if (unit.UnitType != UnitType.Hero || unit.Alive || unit.IsTrainingDummy)
             return;
-        unit.RespawnAt = _time + RespawnDuration(unit);
+        // Batch 833: the timer of a death that started it is the value its death packet carried (Kill), read once: the death's own nexus loss
+        // on the Crystal Scar sits between the two and moves the lead (DominionLeadAdjustment).
+        unit.RespawnAt = _time + (_deathSecondsAtKill.Remove(unit.NetId, out var atKill) && atKill.At == _time
+            ? atKill.Seconds
+            : RespawnDuration(unit));
     }
+
+    /// <summary>Batch 833: the respawn duration a hero's death packet carried, by net id, with the time of that death (<see cref="ScheduleRespawn"/>).</summary>
+    private readonly Dictionary<uint, (double At, double Seconds)> _deathSecondsAtKill = new();
 
     /// <summary>
     /// Batch 771: the end of a zombie life (BBForceDead, or a kill in the life): a hero whose death did not start its timer (the map's
@@ -182,17 +189,41 @@ public sealed partial class CombatService
         // 0: a negative sum lengthens the timer, a sum above 1 gives 0.
         // gcd_PercentRespawnTimeModMinimum (-0.95) is copied by the client and never applied.
         // Batch 454: AllowDeathTimeMods (map 8 ships it on, Map1 leaves it absent = on) gates the mods; the base and the scaling are the map's.
-        // Batch 584: the base is the team's respawn wave (MapProgressionRules.DeathTime with the wave start; map 8 only). Called twice at one
-        // death, at the same time, which gives the same value: the first call already moved the wave start.
+        // Batch 584: the base is the team's respawn wave (MapProgressionRules.DeathTime with the wave start; map 8 only). Batch 833: read once
+        // per death (Kill keeps the value its death packet carries for ScheduleRespawn), with the Crystal Scar's nexus-lead adjustment.
         var reduction = _progression.AllowDeathTimeMods ? RespawnReduction(unit) : 0.0;
         var waveStart = _deathWaveStarts.GetValueOrDefault(unit.Team);
-        var deathTime = _progression.DeathTime(unit.Level, _time, ref waveStart);
+        var (flat, window) = DominionLeadAdjustment(unit.Team);
+        var deathTime = _progression.DeathTime(unit.Level, _time, ref waveStart, flat, window);
         if (startsTimer) _deathWaveStarts[unit.Team] = waveStart;
         return Math.Max(0.0, deathTime * (1.0 - reduction));
     }
 
     /// <summary>Each team's respawn-wave start (GlobalDeathTimerManager keeps one DeathTimerManager per team, +0x60).</summary>
     private readonly Dictionary<Team, double> _deathWaveStarts = new();
+
+    /// <summary>Batch 833: the seconds a nexus lead adds to the leading team's minimum respawn time and takes off the trailing team's (V1.0.0.128).</summary>
+    public const double DominionLeadRespawnSeconds = 2.0;
+
+    /// <summary>
+    /// Batch 833: the Crystal Scar's respawn adjustment by the nexus lead, (seconds added to the minimum respawn time, seconds added to the
+    /// respawn window). V1.0.0.128: "Respawn time adjustments are now +2/-2 seconds regardless of the size in score difference." The rule it
+    /// replaced is Riot's own explanation (Brackhar, Technical Designer, values of 21 October 2011, "Dominion Respawn Explained", Surrender at
+    /// 20, 25 October 2011): with a lead of one point or more the leading team's minimum respawn time grows by 2 s and its window by half of
+    /// that, the trailing team's minimum shrinks by 2 s with no window change, and leads of 50 and 100 points widened it to 3 and 4 s; 1.0.0.128
+    /// keeps the 2 s for every lead. The rule is server code: lol132.exe's GetDeathTime and GetRespawnTime have
+    /// the 126 shape and no shipped file carries it.
+    /// Reconstruction: the score is the nexus health the 0xDD meter shows (<see cref="DominionNexusHealth(Team)"/>), compared at the death,
+    /// and the adjustment is added to the base before the time-dead mods, as the minimum respawn time the explanation names.
+    /// </summary>
+    private (double Flat, double Window) DominionLeadAdjustment(Team team)
+    {
+        if (_gameData.Paths.MapId != GameMaps.CrystalScar || team is not (Team.Order or Team.Chaos)) return (0.0, 0.0);
+        var lead = DominionNexusHealth(team) - DominionNexusHealth(team == Team.Order ? Team.Chaos : Team.Order);
+        return lead >= 1.0 ? (DominionLeadRespawnSeconds, DominionLeadRespawnSeconds / 2.0)
+            : lead <= -1.0 ? (-DominionLeadRespawnSeconds, 0.0)
+            : (0.0, 0.0);
+    }
 
     private static double RespawnReduction(Entity hero) => hero.LoadoutRespawnTimePercent;
 }

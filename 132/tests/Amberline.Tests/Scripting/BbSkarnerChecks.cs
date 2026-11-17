@@ -103,7 +103,7 @@ public static class BbSkarnerChecks
     /// The expiry (remaining duration 0) deals <c>DamagePerTick</c> again. While it holds, <c>OnBuffActivate</c> seals Fracture (slot 2, learnt) on
     /// Skarner; <c>OnBuffDeactivate</c> unseals it (the record's open 2: script = retail).
     /// </summary>
-    [Check("scripting.bb-skarner-impale-ends-at-one-and-a-half-seconds-and-hits-again")]
+    [Check("scripting.bb-skarner-impale-ends-at-one-and-three-quarter-seconds-and-hits-again")]
     public static void ImpaleEndsOnItsTimerAndHitsAgain()
     {
         using var match = Arena();

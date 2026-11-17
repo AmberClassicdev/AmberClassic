@@ -150,7 +150,7 @@ public static class BbJarvanIVChecks
         TestAssert.Near(armour * 0.9, match.Foe.Armor, 0.5, "the armour debuff is 10 percent at rank one");
     }
 
-    [Check("scripting.bb-jarvaniv-martial-cadence-first-swing-adds-eight-percent-of-current-health-as-magic")]
+    [Check("scripting.bb-jarvaniv-martial-cadence-first-swing-adds-six-percent-of-current-health-as-physical")]
     public static void MartialCadenceMeasured()
     {
         var match = Arena();

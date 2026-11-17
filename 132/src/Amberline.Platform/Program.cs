@@ -155,10 +155,18 @@ public static class Program
         // NOT RETAIL (batch 751): retail had no host switch for skins, RP or champions; the store's live controls start from platform.json (a file without the fields: all on).
         accounts.Controls = PlatformControls.From(settings);
         await using var manager = new GameManager(hostSettings, Path.Combine(home, "games"));
+        // Batch 846: the spectator grid (127.0.0.1:8088, bound when the first spectated game registers); streams an earlier run left go now.
+        SpectatorGrid.DeleteLeftovers(Path.Combine(home, "games"));
+        await using var spectators = new SpectatorGrid();
         accounts.RecoverResults(manager, Console.Out);
         var sessions = new PlatformSessions(accounts, activity: host?.Activity);
         // NOT RETAIL: a friend's game start names the game address their player tool reported through the tunnel (spec §7).
-        var games = new PlatformGames(accounts, manager, settings.GameHost, activity: host?.Activity, reportedGameAddress: sessions.ReportedGameAddress);
+        var games = new PlatformGames(accounts, manager, settings.GameHost, activity: host?.Activity, reportedGameAddress: sessions.ReportedGameAddress,
+            spectatorGrid: spectators);
+        // NOT RETAIL (batch 853): a game's stream goes only to its own spectators: a friend's account through the tunnel, or one signed in on this PC.
+        spectators.MayWatch = (gameId, account) => games.MaySpectate(gameId, account, sessions.IsLocalAccount);
+        // Batch 854: AIR 1.52 asks the grid for a drop-in spectator's end of game (AIR 1.45 never does; the 1.0.0.126 line sets none).
+        spectators.EndOfGameStats = (gameId, account) => games.SpectatorEndOfGame(gameId, account, sessions.IsLocalAccount);
         // DIAGNOSTICS (owner, 3 and 4 November 2026): in home mode only the logins Settings' Cheat commands list ticks get cheats.
         if (host is not null) games.MayCheat = HostSettingsPage.CheatRule(host.Paths.Settings);
         var services = new PlatformServices(accounts, sessions, games, settings.HttpPort);
@@ -271,6 +279,7 @@ public static class Program
             catch (AntiforgeryValidationException) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { error = "Refresh the local management page and try again." }); }
         });
         AirRemoteTunnel.Map(app, remoteAccess, settings.RtmpPort, settings.XmppPort, tunnelPeers);
+        AirRemoteTunnel.MapSpectate(app, remoteAccess, spectators);
         AirRemoteTunnel.MapSignIn(app, accounts, remoteAccess);
         app.MapGet("/health", () => Results.Json(Health(home: host is not null)));
         // NOT RETAIL: the home host's pages answer only the host's signed-in browser (HostGate); /open signs it in.

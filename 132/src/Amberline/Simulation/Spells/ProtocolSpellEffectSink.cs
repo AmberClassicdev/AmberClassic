@@ -253,8 +253,12 @@ public sealed class ProtocolSpellEffectSink : ISpellEffectSink
 
     // Temporary life can expire in the same step as ordinary respawn. Both
     // must retain lifecycle order (both are lifecycle packets; Flush keeps their queue order).
-    public void SendForceDead(Entity unit) =>
-        _queue.EnqueueLifecycle(unit.NetId, 0, _ => CombatPackets.ForceDead(unit.NetId));
+    // Batch 833: the duration is read now, not in the deferred builder: a respawn in the same step has cleared RespawnAt by the flush.
+    public void SendForceDead(Entity unit, double deathDuration)
+    {
+        var duration = Float(deathDuration);
+        _queue.EnqueueLifecycle(unit.NetId, 0, _ => CombatPackets.ForceDead(unit.NetId, duration));
+    }
 
     public void SendShowHealthBar(Entity unit, bool show) =>
         Enqueue(CombatPackets.ShowHealthBar(unit.NetId, show));

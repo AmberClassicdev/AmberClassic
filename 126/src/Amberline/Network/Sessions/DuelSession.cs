@@ -651,8 +651,46 @@ public sealed partial class DuelSession
                 participant.Hero.MatchStatistics.RecordDisconnect(_startClock);
         }
         Started = true;
+        if (Spectator is { } spectator) spectator.Start(() => BuildSpectatorStartup(spectator.Observer.View));
         return true;
     }
+
+    /// <summary>
+    /// Batch 847 (spectating S2): the match's spectator recorder, when the server was started with <c>--spectator-stream</c>; null otherwise.
+    /// The session hands it its start-up chunk at the start and the packets every seat gets that a spectator sees too (the clock, the
+    /// announcements, all chat, pause and resume, the agreed surrender, the presence notices); everything else reaches it through its
+    /// replication view.
+    /// </summary>
+    public Amberline.Network.Spectator.SpectatorRecorder? Spectator { get; set; }
+
+    /// <summary>
+    /// Batch 847: the spectator stream's start-up chunk. The replay client reads the stream as a player's and needs from it what a seat gets
+    /// before its first flush: SynchVersionS2C first (its main loop waits for that answer out of the stream, design 845 B3), the game number,
+    /// the spawn burst with every hero as another seat's (no local hero), then the map-ready burst ending in StartGame, which needs no local
+    /// player while replaying. The client holds the stream after
+    /// SynchVersionS2C and after StartSpawn until the client's own world load, so the
+    /// loading-screen roster packets of channel 6 (TeamRosterUpdate, RequestReskin, RequestRename) would play after the load: they are left
+    /// out, the cards coming from SynchVersionS2C's PlayerLiteInfo. The view learns the heroes and the map units as a seat's does.
+    /// </summary>
+    internal IReadOnlyList<PlaintextPacket> BuildSpectatorStartup(Amberline.Network.Replication.ReplicationView view)
+    {
+        var packets = new List<PlaintextPacket>
+        {
+            LoadingPackets.SynchVersionS2C(players: Roster, mapId: _mapId, mode: _mode),
+            LoadingPackets.WorldSendGameNumber(),
+        };
+        packets.AddRange(_spawn.BuildHeroSpawnBurst(null, _participants));
+        foreach (var member in _participants)
+            if (member.Hero is { } hero) view.Known.Add(hero.NetId);
+        foreach (var entity in MapEntities) view.Known.Add(entity.NetId);
+        packets.AddRange(_spawn.BuildMapReadyBurst(view, null, MapEntities));
+        return packets;
+    }
+
+    // The chat envelope (ChatPackets.Envelope): sender u32, team word u32, length u32, text, NUL; the client's line has the same layout.
+    private static bool IsAllChatRelay(ReadOnlySpan<byte> relay, ReadOnlySpan<byte> line) =>
+        relay.Length >= 13 && line.Length >= relay.Length && BinaryPrimitives.ReadUInt32LittleEndian(relay[4..]) == 0 &&
+        relay[8..].SequenceEqual(line[8..relay.Length]);
 
     /// <summary>Detach a peer while preserving its authoritative hero.</summary>
     public bool Disconnect(long connectionId)
@@ -778,6 +816,10 @@ public sealed partial class DuelSession
                 var chatPackets = _chat.Dispatch(participantForInput, plaintext, _participants,
                     allowCommands: !Paused);
                 output.AddRange(chatPackets);
+                // Batch 847: spectators see all chat but not team chat (wiki, Spectator_mode, the October 2011 FAQ). The relay of an all-chat
+                // line is the envelope whose team word is 0 and whose length, text and NUL are the line's own; a command's reply never is.
+                if (Spectator is { } spectator && chatPackets.Count > 0 && IsAllChatRelay(chatPackets[0].Packet.Plaintext.Span, plaintext))
+                    spectator.Record(chatPackets[0].Packet);
                 if (chatPackets.Count != 0)
                     MarkActivity(participantForInput);
             }
@@ -1166,6 +1208,7 @@ public sealed partial class DuelSession
                 if (participant.Spawned && participant.Ready && participant.ConnectionId is long connectionId)
                     output.Add(new SessionOutboundPacket(connectionId, clock));
             }
+            Spectator?.Record(clock);
             // Synchronization is delayed for client readiness. It must not
             // discard simulation time already elapsed since StartGame.
             _hudOrigin = _startClock;
@@ -1223,6 +1266,7 @@ public sealed partial class DuelSession
                     if (participant.Spawned && participant.Ready && participant.ConnectionId is long connectionId)
                         output.Add(new SessionOutboundPacket(connectionId, packet));
                 }
+                Spectator?.Record(packet);
             }
 
             // Reconstruction: the client starts with the nexus intro particles and switches
@@ -1237,6 +1281,7 @@ public sealed partial class DuelSession
                     if (participant.Spawned && participant.Ready && participant.ConnectionId is long connectionId)
                         output.Add(new SessionOutboundPacket(connectionId, packet));
                 }
+                Spectator?.Record(packet);
                 _nexusIdleParticlesSent = true;
             }
         }
@@ -1257,6 +1302,11 @@ public sealed partial class DuelSession
                     output.Add(new SessionOutboundPacket(connectionId, packet));
                 }
             }
+            if (Spectator is { } spectator)
+                foreach (var packet in packets)
+                    if (packet.EntityReferences.Count == 0 ||
+                        packet.EntityReferences.Any(reference => spectator.Observer.View.Visible.Contains(reference.NetId)))
+                        spectator.Record(packet);
             _protectAt = null;
         }
 

@@ -35,6 +35,10 @@ public sealed partial class PlatformGames
     public const int RankedTreelineSoloQueueId = 11;
     public const int DominionRankedSoloQueueId = 18;
     public const int DominionRankedTeamQueueId = 19;
+    /// <summary>Batch 844: the AIR 1.52 menu's "Ranked Teams" leaves, partyid 42 (Summoner's Rift 5v5) and 41 (Twisted Treeline 3v3); only a
+    /// line whose client has them offers them (<see cref="AirLine.RankedTeamQueues"/>).</summary>
+    public const int RankedTeam5x5QueueId = 42;
+    public const int RankedTeam3x3QueueId = 41;
     /// <summary>Season One: "summoners of Level 30 will be able to indulge in the ranked game system" (wiki Season_One); the queue's minLevel.</summary>
     public const int RankedMinLevel = 30;
     /// <summary>The line's champion requirement (<see cref="AirLine.RankedMinChampions"/>): 14 in 126, 16 in 132.</summary>
@@ -91,11 +95,15 @@ public sealed partial class PlatformGames
     /// arrival order may anchor a game. Its candidates are the units whose rating (a party's mean) is within <see cref="RatingWindow"/> of
     /// the anchor's, closest first, and each joins the side it fits with the lower rating total, so the two teams' means stay close. The
     /// first anchor whose two sides fill starts the game. The window widens while the anchor waits, so a small group still plays.
+    /// Batch 844, a Ranked Teams queue: a unit is one named team, rated by its team rating (TeamStatDetail.rating, <see cref="PlatformRatings.TeamCurrent"/>),
+    /// and two parties of one team never meet (Reconstruction, as the rest: retail's team matchmaker is not in the shipped files; wiki 132.06
+    /// only says it was "tweaked to be more accurate").
     /// ponytail: every anchor is tried every tick, O(units²) on at most the queue's 100 entries.
     /// </summary>
     private List<QueueEntry>[]? RankedTeams(QueueRule rule, QueueEntry[][] units)
     {
-        var rated = units.Select(unit => (Unit: unit, Rating: unit.Average(entry => (double)accounts.Rating(entry.AccountId, rule.Type)))).ToArray();
+        var rated = units.Select(unit => (Unit: unit, Rating: unit[0].TeamId is { } team ? accounts.TeamRating(team, rule.Type)
+            : unit.Average(entry => (double)accounts.Rating(entry.AccountId, rule.Type)))).ToArray();
         var now = _clock.GetUtcNow();
         foreach (var anchor in rated)
         {
@@ -105,6 +113,7 @@ public sealed partial class PlatformGames
             foreach (var (unit, rating) in rated.Where(unit => Math.Abs(unit.Rating - anchor.Rating) <= window)
                          .OrderBy(unit => unit.Unit == anchor.Unit ? -1 : Math.Abs(unit.Rating - anchor.Rating)))
             {
+                if (unit[0].TeamId is { } team && teams.Any(picked => picked.Any(entry => entry.TeamId == team))) continue;
                 var side = teams[0].Count + unit.Length > rule.TeamSize ? 1
                     : teams[1].Count + unit.Length > rule.TeamSize || totals[0] <= totals[1] ? 0 : 1;
                 if (teams[side].Count + unit.Length > rule.TeamSize) continue;

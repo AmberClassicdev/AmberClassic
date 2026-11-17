@@ -80,7 +80,25 @@ public static class TargetGateChecks
         TestAssert.Equal(null, BbSpellTargeting.RejectTarget(caster, minion, twoShiv), "and takes an enemy minion");
         TestAssert.Equal(null, BbSpellTargeting.RejectTarget(caster, enemyWard, Shipped("LeapStrike")), "Leap Strike takes an enemy ward");
         TestAssert.Equal(null, BbSpellTargeting.RejectTarget(caster, ownWard, Shipped("BlindMonkWOne")), "Safeguard takes an allied ward");
-        TestAssert.False(BbSpellTargeting.Admits(caster, enemyWard, Shipped("LeapStrike")), "an area scan still picks no ward");
+        TestAssert.False(BbSpellTargeting.Admits(caster, enemyWard, Shipped("LeapStrike")), "a line or a cone still picks no ward");
+    }
+
+    /// <summary>
+    /// Batch 841: an area query takes a ward when its flags carry <c>AffectWards</c>, the scan of the 1.0.0.132 Spells/ResistantSkin.luaobj
+    /// (<c>AffectEnemies AffectMinions AffectWards</c>, the Baron's ward push); without the flag the same ward is not picked.
+    /// </summary>
+    [Check("spells.target-gate-an-area-query-takes-a-ward-with-affect-wards-only")]
+    public static void AnAreaQueryTakesAWardWithAffectWardsOnly()
+    {
+        using var match = new BbM3.Match("Sivir");
+        var hero = match.Hero;
+        var ward = new Entity(match.Runtime.World.Allocate(UnitType.Minion), EntityKind.Ward, UnitType.Minion, Team.Chaos,
+            new Position2(hero.Position.X + 150.0, hero.Position.Z)) { Name = "SightWard", IsWard = true, Alive = true, Visible = true, Health = 5, MaxHealth = 5 };
+        match.Runtime.World.Register(ward);
+        bool Picked(params string[] flags) => BbSpellTargeting.Area(match.Runtime.Spells, hero, hero.Position, 300.0, Set(flags)).Contains(ward);
+        TestAssert.True(Picked("AffectEnemies", "AffectMinions", "AffectWards"), "the ResistantSkin flags take the ward");
+        TestAssert.False(Picked("AffectEnemies", "AffectMinions"), "minion flags alone do not");
+        TestAssert.False(Picked("AffectFriends", "AffectMinions", "AffectWards"), "nor an AffectWards scan of the other team");
     }
 
     [Check("spells.target-gate-always-self-takes-the-attacker-only-inside-the-shape")]

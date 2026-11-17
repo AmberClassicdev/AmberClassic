@@ -67,6 +67,9 @@ public sealed partial class DuelSession
     {
         foreach (var participant in _participants.Where(seat => seat.Spawned && seat.Ready))
             output.AddRange(ToParticipant(participant, [packet]));
+        // Batch 847: the spectator stream carries the pause, the resume and the clock that follows it; the recorder repeats the pause as the
+        // heartbeat the replay client counts (SpectatorRecorder.PauseHeartbeatSeconds).
+        Spectator?.Record(packet);
     }
 
     private void AddReconnectPause(List<PlaintextPacket> packets)

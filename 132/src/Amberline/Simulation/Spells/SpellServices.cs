@@ -187,8 +187,11 @@ public interface ISpellEffectSink
     void SendFinishCast(Entity unit) =>
         throw new NotSupportedException("The spell effect sink does not implement cast completion.");
     void SendCooldown(Entity unit, int slot, double seconds, bool summoner = false);
-    /// <summary>Forces the client back to the ordinary dead state after a temporary revival.</summary>
-    void SendForceDead(Entity unit) =>
+    /// <summary>
+    /// Forces the client back to the ordinary dead state after a temporary revival. <paramref name="deathDuration"/> is the time from now to the
+    /// respawn (0 for a unit with no respawn): the 132 packet's DeathDuration, from which the client's death timer counts down.
+    /// </summary>
+    void SendForceDead(Entity unit, double deathDuration) =>
         throw new NotSupportedException("The spell effect sink does not implement force-dead replication.");
     /// <summary>Replicates native ShowHealthBar (0xD7): hides or shows the unit's health bar on every client.</summary>
     void SendShowHealthBar(Entity unit, bool show) =>

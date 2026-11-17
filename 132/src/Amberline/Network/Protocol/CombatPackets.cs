@@ -881,7 +881,11 @@ public static class CombatPackets
     /// <summary>
     /// NpcForceDead (0x1E), 9 bytes in 132 (126: 5): a new float at byte 5, which the 132 handler stores on the unit before
     /// it calls the death routine; the server-side builder compiled into the client grew from 5 to 9 bytes.
-    /// Reconstruction: what the float means is not decoded (a death duration, by its place); this server sends 0.
+    /// Batch 833: the float is the hero's DeathDuration. lol132.exe's handler writes it at hero +0x2BF8 (the debug dump
+    /// The client prints that field as "DeathDuration"; its getter the client is vtable slot 0x21C), then calls slot 0x258, whose hero
+    /// override stamps the death time (+0x29C0) with the game time. The HUD (the client "setRespawnTime";
+    /// The client "DeathTimer_%d") shows ceil(DeathDuration - (now - stamp)), so the value is the time left to the respawn at the packet
+    /// (MatchGameplayHooks.EndZombieLife). The hero death packet (0x62, NpcDie +11) sets the same field.
     /// </summary>
     public static PlaintextPacket ForceDead(uint unitNetId, float value = 0.0f)
     {
