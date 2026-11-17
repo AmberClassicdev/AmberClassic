@@ -13,7 +13,7 @@ namespace Amberline.Tests.Air;
 /// LocalAppData and desktop) and an install folder under one temporary folder: never a real client folder, the real profile or the
 /// real desktop. Hosts are reserved .test names or loopback.
 /// </summary>
-public static class AirPlayerInstallChecks
+public static partial class AirPlayerInstallChecks
 {
     private const string PinA = "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1";
     private const string PinB = "B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2";
@@ -1034,12 +1034,17 @@ public static class AirPlayerInstallChecks
     {
         private readonly Queue<bool> answers = new(answers);
 
-        /// <summary>The seam; batch 697: the leftover question's answer and the ports (only <see cref="Binds"/>, never the real ones).</summary>
-        public PlayerMode.ShortcutUi Seam => new(Lines.Add, () => Hidden++, problem =>
+        private bool TryAgain(PlayerProblem problem)
         {
             Problems.Add(problem);
-            return this.answers.TryDequeue(out var again) && again;
-        }, (question, canClose) =>
+            return answers.TryDequeue(out var again) && again;
+        }
+
+        /// <summary>
+        /// The seam; batch 697: the leftover question's answer and the ports (only <see cref="Binds"/>, never the real ones). Batch 856: the
+        /// moved dialog's answer (<see cref="SetUp"/>), the programs it would start and the synthetic profile (<see cref="LocalAppData"/>).
+        /// </summary>
+        public PlayerMode.ShortcutUi Seam => new(Lines.Add, () => Hidden++, TryAgain, (question, canClose) =>
         {
             Questions.Add((question, canClose));
             return canClose && CloseAndStart;
@@ -1056,8 +1061,20 @@ public static class AirPlayerInstallChecks
             PlayedWith = (server, connection);
             shown();
             return Task.FromResult(0);
-        }, Binds is { } bound ? [bound] : []);
+        }, Binds is { } bound ? [bound] : [], Moved);
 
+        /// <summary>Batch 856: the moved dialog's seam alone, as the <c>--install</c> window gets it.</summary>
+        public ServerMoved.Ui Moved => new(LocalAppData, Lines.Add, question =>
+        {
+            Moves.Add(question);
+            return SetUp;
+        }, TryAgain, (file, arguments) => Started.Add((file, [.. arguments])), Logged.Add);
+
+        public string LocalAppData { get; init; } = Path.Combine(Path.GetTempPath(), "league-air-no-profile");
+        public bool SetUp { get; init; }
+        public List<ServerMoved.Question> Moves { get; } = [];
+        public List<(string File, string[] Arguments)> Started { get; } = [];
+        public List<string> Logged { get; } = [];
         public bool CloseAndStart { get; init; }
         public List<(PlayerProblem Question, bool CanClose)> Questions { get; } = [];
         public int? Binds { get; init; }

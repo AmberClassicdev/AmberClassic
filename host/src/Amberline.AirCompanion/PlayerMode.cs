@@ -102,10 +102,11 @@ internal static class PlayerMode
     /// client left from an earlier start (true for Close and start; the flag says whether closing is offered), and <see cref="Ports"/>
     /// are the local ports the play step binds, so a check uses free ports instead of the real ones. NOT RETAIL (the classic start, design
     /// 2026-11-12 §2): the windows' play step hands Program.RunDesktopAsync the next-start question (true for "Open the classic launcher
-    /// again") and the start window as the fallback's notice.
+    /// again") and the start window as the fallback's notice. NOT RETAIL (batch 856): <see cref="Moved"/> is the moved dialog's seam
+    /// (<see cref="ServerMoved.Ui"/>).
     /// </summary>
     internal sealed record ShortcutUi(Action<string> Status, Action Hide, Func<PlayerProblem, bool> TryAgain, Func<PlayerProblem, bool, bool> Leftover,
-        Func<string, string, Action, Task<int>> Play, IReadOnlyList<int> Ports)
+        Func<string, string, Action, Task<int>> Play, IReadOnlyList<int> Ports, ServerMoved.Ui Moved)
     {
         public static ShortcutUi Windows(PlayerInstallWindow.StatusWindow status, string title)
         {
@@ -127,7 +128,8 @@ internal static class PlayerMode
                     status.Hide();
                     return PlayerInstallWindow.AskCloseLeftover(problem, canClose);
                 },
-                (server, connection, shown) => Program.RunDesktopAsync(server, MaestroPort, connection, shown, askClassic, status.Show), LocalPorts);
+                (server, connection, shown) => Program.RunDesktopAsync(server, MaestroPort, connection, shown, askClassic, status.Show), LocalPorts,
+                ServerMoved.Ui.Windows(status, Console.WriteLine));
         }
     }
 
@@ -145,6 +147,10 @@ internal static class PlayerMode
     /// <summary>
     /// One start of an installed server: its clients must be there, the update check runs (an unreachable server or one that fails the
     /// pin stops here: the League client could not sign in to it either), then play. Every failure asks Try again; Close ends with 2.
+    /// NOT RETAIL (batch 856, design Part 1 steps 2-3): the server's manifest is read once, first, on every start (the run that finishes an
+    /// update too), with the connection it is read over, which the later steps use too. A server that moved to patch 1.0.0.132 gets the
+    /// moved dialog before any other check (<see cref="ServerMoved"/>) and the start never plays. Otherwise the checks run in their order, and a manifest that could not be read fails where the update check sits,
+    /// as before; the finishing run only reads <c>movedTo</c> and goes on as before.
     /// </summary>
     internal static async Task<int> StartAsync(string install, string id, bool checkUpdate, ShortcutUi ui)
     {
@@ -166,10 +172,12 @@ internal static class PlayerMode
                 PlayerProblem problem;
                 try
                 {
+                    var read = PlayerInstall.ReadServerAsync(server, CancellationToken.None);
+                    if (await MovedTo(read) is { } moved) return await ServerMoved.RunAsync(title, (await read).Connection.Host, moved, log, ui.Moved);
                     if (MissingClient(server, title, log) is { } missing) problem = missing;
                     else if (!await ClearLeftoversAsync(install, server, title, log, ui)) return 2;
                     else if (BusyPort(ui.Ports) is { } port) problem = PortInUse(title, port, $"127.0.0.1:{port} could not be bound on this PC.", log);
-                    else if (checkUpdate && await StagedUpdateAsync(install, server) is { } staged)
+                    else if (checkUpdate && await StagedUpdateAsync(install, server, read) is { } staged)
                     {
                         StartStaged(staged, id);
                         return 0;
@@ -343,12 +351,26 @@ internal static class PlayerMode
     }
 
     /// <summary>
+    /// NOT RETAIL (batch 856): the manifest's <c>movedTo</c>, or null. A connection or manifest that could not be read is null here; awaiting
+    /// it again (<see cref="StagedUpdateAsync"/>) throws the same exception where the update check sits.
+    /// </summary>
+    private static async Task<ServerMoved.Target?> MovedTo(Task<(AirRemoteInvitation Connection, PlayerInstall.Manifest Manifest)> read)
+    {
+        try { return (await read).Manifest.MovedTo; }
+        catch (Exception exception) when (exception is not OutOfMemoryException) { return null; }
+    }
+
+    /// <summary>
     /// The update check: a server that cannot be reached or fails the pin stops the start (the exception goes on); one that answers but
     /// wrongly (an HTTP error, a manifest for another port, a bad archive) leaves the current tool running.
     /// </summary>
-    private static async Task<string?> StagedUpdateAsync(string install, string server)
+    private static async Task<string?> StagedUpdateAsync(string install, string server, Task<(AirRemoteInvitation Connection, PlayerInstall.Manifest Manifest)> read)
     {
-        try { return await PlayerInstall.StageUpdateAsync(install, server, CancellationToken.None); }
+        try
+        {
+            var (connection, manifest) = await read;
+            return await PlayerInstall.StageUpdateAsync(install, server, connection, manifest, CancellationToken.None);
+        }
         catch (Exception exception) when (exception is HttpRequestException { StatusCode: not null } or InvalidDataException or IOException or
             JsonException or ArgumentException or UnauthorizedAccessException)
         {

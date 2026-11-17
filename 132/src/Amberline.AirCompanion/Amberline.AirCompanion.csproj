@@ -42,6 +42,10 @@
     <Compile Include="$(HostRoot)src\Amberline\Rads\ManagedLayout.cs" Link="Rads\ManagedLayout.cs" />
     <!-- NOT RETAIL: the player's entry for the bring-your-own-clients mode (the play mode); copied beside the executable in the build output. -->
     <None Include="$(HostRoot)src\Amberline.AirCompanion\player\Play.cmd" TargetPath="Play.cmd" CopyToOutputDirectory="PreserveNewest" />
+    <!-- NOT RETAIL (batch 856, design 2026-11-17): what this player tool understands, at the root of its publish output and so of the
+         companion.zip tools/build-server.ps1 makes from it. {"movedTo":1}: the tool shows the moved dialog (ServerMoved.cs); a 1.0.0.132 host
+         serves an old 1.0.0.126 port only with a tool that has it. -->
+    <None Include="$(HostRoot)src\Amberline.AirCompanion\capabilities.json" TargetPath="capabilities.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup Condition="'$(AmberlineArchiveInstaller)' == 'true'">
     <!-- MIT. Only the 7z (LZMA2 + BCJ) reader of the game archive is used (ClientFilesInstaller); Windows has no 7z decoder:

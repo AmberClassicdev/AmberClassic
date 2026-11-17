@@ -29,7 +29,8 @@ public static class PlatformLine
     /// <summary>
     /// NOT RETAIL (batch 830, owner 16 November 2026): the 1.0.0.126 line's home install, whose logins this line's setup and Users offer to copy
     /// (<see cref="HostLoginCopy"/>): its <c>FolderMove.HostName</c> and <c>InstallMarker</c> (<c>126/patch.json</c> "home"). The 1.0.0.126
-    /// line has no such value; its Program.cs offers no copy.
+    /// line has no such value; its Program.cs offers no copy. NOT RETAIL (batch 856): its friends' port, 8391 (<c>126/patch.json</c> "ports"
+    /// "remote"), where this line's stand-in answers that line's old shortcuts while the host guides them here (<see cref="HostOldShortcuts"/>).
     /// </summary>
-    public static readonly EarlierHome CopyLoginsFrom = new("Amberline", "amberline-install.json", "1.0.0.126");
+    public static readonly EarlierHome CopyLoginsFrom = new("Amberline", "amberline-install.json", "1.0.0.126", RemotePort: 8391);
 }

@@ -9,9 +9,10 @@ namespace Amberline.Platform;
 /// <summary>
 /// The other patch line's home install whose logins this setup offers to copy (<see cref="HostLoginCopy"/>): that line's
 /// <c>FolderMove.HostName</c> and <c>InstallMarker</c>, and the patch the pages name. Only the 1.0.0.132 line's Program.cs passes one
-/// (its <c>PlatformLine.CopyLoginsFrom</c>, the 1.0.0.126 line's); the 1.0.0.126 line's offers no copy.
+/// (its <c>PlatformLine.CopyLoginsFrom</c>, the 1.0.0.126 line's); the 1.0.0.126 line's offers no copy. Batch 856: <paramref name="RemotePort"/>,
+/// that line's default friends' port, where <see cref="HostOldShortcuts"/> answers its old shortcuts (its <c>platform.json</c> may name another).
 /// </summary>
-public sealed record EarlierHome(string Name, string Marker, string Patch);
+public sealed record EarlierHome(string Name, string Marker, string Patch, int RemotePort);
 
 /// <summary>
 /// Where <see cref="HostLoginCopy"/> looks for the other line's install: the user's local application data (its pointer, and its data from
@@ -134,7 +135,9 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
         <div class=actions><button type=submit>Use this login</button></div></form>
         """;
 
-    private async Task<IResult> CopyAsync(HttpContext context, IAntiforgery antiforgery, bool setup)
+    /// <param name="then">Batch 856: what follows a copy that was not refused (none to copy included): its words close the page. Move my
+    /// 1.0.0.126 players here (<see cref="HostOldShortcuts"/>) turns guiding on there; a refused or expired copy never runs it.</param>
+    internal async Task<IResult> CopyAsync(HttpContext context, IAntiforgery antiforgery, bool setup, Func<string>? then = null)
     {
         var next = setup ? $"<a class=button href={HostSteps.Start}>Continue</a>" : $"<a class=button href={HostInvite.UsersPath}>Back to Users</a>";
         IResult Page(string content, int status = StatusCodes.Status200OK) =>
@@ -144,7 +147,8 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
         var found = Find();
         if (found?.Refused is { } refused) return Page($"{Title}<p class=warn>{refused}</p>", StatusCodes.Status409Conflict);
         if (found is null || found.Logins.Count == 0)
-            return Page($"{Title}<p>Amberline found no logins in your Amberline for {from.Patch}.</p>", StatusCodes.Status404NotFound);
+            return then is null ? Page($"{Title}<p>Amberline found no logins in your Amberline for {from.Patch}.</p>", StatusCodes.Status404NotFound)
+                : Page($"{Title}<p>Amberline found no logins to copy in your Amberline for {from.Patch}.</p>{then()}");
         var (copied, taken) = accounts.Copy(found.Logins);
         // NOT RETAIL: the host page's activity feed says what the host did, never a name (batch 748's feed names one added user).
         if (copied.Length > 0) loop.Activity.Add($"{Logins(copied.Length)} copied from the Amberline for {from.Patch}");
@@ -157,7 +161,7 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
             {(taken.Length == 0 ? "" : $"<p>Not copied, because a login here already has the username or summoner name: {names}.</p>")}
             {(found.Unreadable == 0 ? "" : $"<p class=warn>{Logins(found.Unreadable)} could not be read and {(found.Unreadable == 1 ? "was" : "were")} not copied.</p>")}
             <p class=tip>Each copied login keeps its password and starts here as a new login: what they own and their games stay with your Amberline for {from.Patch}. Users need this server's Play file to play here.</p>
-            {own}
+            {own}{then?.Invoke()}
             """);
     }
 
@@ -241,13 +245,13 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
     {
         var local = loop.CopyFrom.LocalAppData;
         // Orchestrator's ruling (batch 830 review): the install this user's own pointer names is this user's own server, read whatever its ACL.
-        if (local is not null && Pointer(Path.Combine(local, from.Name, "install.json")) is { } pointed) yield return (Path.Combine(pointed, "data"), false);
+        if (local is not null && Pointer(Path.Combine(local, from.Name, "install.json"), from.Marker) is { } pointed) yield return (Path.Combine(pointed, "data"), false);
         if (loop.CopyFrom.Drive is { } drive && File.Exists(Path.Combine(drive, from.Name, from.Marker))) yield return (Path.Combine(drive, from.Name, "data"), true);
         if (local is not null) yield return (Path.Combine(local, from.Name, "data"), false);
     }
 
-    /// <summary>The install folder the other line's pointer names while that folder holds its marker (that line's <c>FolderMove.ReadPointer</c>).</summary>
-    private string? Pointer(string path)
+    /// <summary>The install folder the other line's pointer names while that folder holds its <paramref name="marker"/> (that line's <c>FolderMove.ReadPointer</c>).</summary>
+    internal static string? Pointer(string path, string marker)
     {
         try
         {
@@ -255,13 +259,13 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
             using var document = JsonDocument.Parse(stream);
             return document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("folder", out var value) &&
                 value.ValueKind == JsonValueKind.String && value.GetString() is { Length: > 0 } folder && Path.IsPathFullyQualified(folder) &&
-                File.Exists(Path.Combine(folder, from.Marker)) ? folder : null;
+                File.Exists(Path.Combine(folder, marker)) ? folder : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException) { return null; }
     }
 
     /// <summary>Whether that Amberline runs: its store's lease is held (PlatformAccounts opens <c>accounts.lock</c> with no sharing).</summary>
-    private static bool Leased(string data)
+    internal static bool Leased(string data)
     {
         try
         {

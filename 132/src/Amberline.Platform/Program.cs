@@ -245,10 +245,17 @@ public static class Program
                 { PermitLimit = HostAccountPage.PerAddress, Window = TimeSpan.FromHours(1), QueueLimit = 0 }));
         });
         await using var app = builder.Build();
+        // NOT RETAIL (batch 830): this line's own-login step and Users offer to copy the logins of a 1.0.0.126 Amberline on this PC
+        // (HostLoginCopy, PlatformLine.CopyLoginsFrom); the 1.0.0.126 line's Program.cs offers none.
+        var copy = host is null ? null : new HostLoginCopy(host, accounts, PlatformLine.CopyLoginsFrom);
+        // NOT RETAIL (batch 856): Users' Move my 1.0.0.126 players here, and the stand-in that guides that line's old shortcuts here from its
+        // friends' port (HostOldShortcuts); the 1.0.0.126 line's Program.cs makes none.
+        await using var oldShortcuts = copy is null ? null : new HostOldShortcuts(host!, PlatformLine.CopyLoginsFrom, copy, settings.BindAddress, settings.RemotePort, pin);
         // DIAGNOSTICS: the dashboard's demo data follows the switch as this start read it (HostLoop.DemoData), never the live variable.
         await using var dashboard = host is null ? null : new HostDashboard(host, settings,
             () => PlatformManagement.Online(accounts, sessions, games, chat), () => HostDashboard.RunningGames(manager), maxGames: () => manager.MaxGames,
-            signUp: signUp, board: games.HostBoard, endGame: id => manager.StopAsync(new HostGuest("", "", "", Admin: true), id), demoData: host.DemoData)
+            signUp: signUp, board: games.HostBoard, endGame: id => manager.StopAsync(new HostGuest("", "", "", Admin: true), id), demoData: host.DemoData,
+            oldShortcuts: oldShortcuts)
             { Support = HostSupport.For(host, settings, manager, accounts, sessions) };
         UseRegistrationProxy(app, settings);
         app.UseRateLimiter();
@@ -284,19 +291,17 @@ public static class Program
         app.MapGet("/health", () => Results.Json(Health(home: host is not null)));
         // NOT RETAIL: the home host's pages answer only the host's signed-in browser (HostGate); /open signs it in.
         if (host is not null) HostGate.Use(app, settings.HttpPort, host.Sessions, HostSteps.Start, context => signUp!.Serves(context) || accountPage!.Serves(context));
-        // NOT RETAIL (batch 830): this line's own-login step and Users offer to copy the logins of a 1.0.0.126 Amberline on this PC
-        // (HostLoginCopy, PlatformLine.CopyLoginsFrom); the 1.0.0.126 line's Program.cs offers none.
-        var copy = host is null ? null : new HostLoginCopy(host, accounts, PlatformLine.CopyLoginsFrom);
         copy?.Map(app);
         // NOT RETAIL: the home host's first-run steps; the name and the address they save reach /bootstrap/client.json at once.
         var steps = host is null ? null : HostSteps.Map(app, host, accounts, copy);
+        oldShortcuts?.Map(app, steps);
         // NOT RETAIL: the host pages' shell and stylesheet (HostPages), after the gate so its refusal pages stay bare.
         if (host is not null) HostPages.Use(app, host, () => steps!.ServerName, nav: true);
         if (host is not null) HostPlay.Map(app, host, settings);
         if (host is not null) HostUpdates.Map(app, host, () => HostDashboard.RunningGames(manager).Count);
         // NOT RETAIL: Users and Add a user: the logins, their status and actions, and the Play file, under the gated /host pages.
         if (host is not null) HostInvite.Map(app, host, () => steps!.PublicHost, () => steps!.ServerName, accounts, sessions, remoteAccess,
-            settings.RemotePort, pin, signUp, games, chat, copy);
+            settings.RemotePort, pin, signUp, games, chat, copy, oldShortcuts);
         signUp?.Map(app);
         accountPage?.Map(app);
         share?.Map(app);

@@ -359,7 +359,7 @@ public static class HostLoginCopyChecks
     }
 
     /// <summary>The 1.0.0.126 line's home install name and marker (<c>126/patch.json</c> "home"), on either line.</summary>
-    private static (string Name, string Marker) Home126()
+    internal static (string Name, string Marker) Home126()
     {
         using var facts = JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(WorkspaceFiles.PatchFolder)!, "126", "patch.json")));
         return (facts.RootElement.GetProperty("home").GetProperty("name").GetString()!, facts.RootElement.GetProperty("home").GetProperty("marker").GetString()!);
@@ -377,7 +377,7 @@ public static class HostLoginCopyChecks
     }
 
     /// <summary>A protected ACL: full control for <paramref name="user"/>, Administrators and SYSTEM only (a folder's passed on to its children).</summary>
-    private static T PrivateTo<T>(SecurityIdentifier user) where T : FileSystemSecurity, new()
+    internal static T PrivateTo<T>(SecurityIdentifier user) where T : FileSystemSecurity, new()
     {
         var security = new T();
         security.SetAccessRuleProtection(true, false);
@@ -394,7 +394,7 @@ public static class HostLoginCopyChecks
     }
 
     /// <summary>A directory junction (no privilege needed, unlike a symbolic link) at <paramref name="link"/> to <paramref name="target"/>.</summary>
-    private static void Junction(string link, string target)
+    internal static void Junction(string link, string target)
     {
         using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
         {
@@ -406,7 +406,7 @@ public static class HostLoginCopyChecks
     }
 
     /// <summary>Every file under <paramref name="root"/> by its relative path, with its SHA-256 (compared, never printed).</summary>
-    private static Dictionary<string, byte[]> Tree(string root) => Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+    internal static Dictionary<string, byte[]> Tree(string root) => Directory.GetFiles(root, "*", SearchOption.AllDirectories)
         .ToDictionary(file => Path.GetRelativePath(root, file), file => SHA256.HashData(File.ReadAllBytes(file)), StringComparer.Ordinal);
 
     /// <summary>What a new login gets, apart from its names and id: the loadout, the rune pages (without their times), economy and flags.</summary>

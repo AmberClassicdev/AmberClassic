@@ -1196,7 +1196,7 @@ public static class HostDashboardChecks
         return page;
     }
 
-    private static async Task<JsonElement> StatusAsync(HttpClient client)
+    internal static async Task<JsonElement> StatusAsync(HttpClient client)
     {
         using var answer = await client.GetAsync("/host/status.json");
         var text = await answer.Content.ReadAsStringAsync();
@@ -1205,7 +1205,7 @@ public static class HostDashboardChecks
         return json.RootElement.Clone();
     }
 
-    private static async Task<JsonElement> WaitForStatusAsync(HttpClient client, Func<JsonElement, bool> ready)
+    internal static async Task<JsonElement> WaitForStatusAsync(HttpClient client, Func<JsonElement, bool> ready)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
         while (true)
@@ -1217,7 +1217,7 @@ public static class HostDashboardChecks
         }
     }
 
-    private static (string State, string Text) Check(JsonElement status, string id)
+    internal static (string State, string Text) Check(JsonElement status, string id)
     {
         var check = status.GetProperty("checks").EnumerateArray().Single(line => line.GetProperty("id").GetString() == id);
         return (check.GetProperty("state").GetString()!, check.GetProperty("text").GetString()!);
@@ -1229,11 +1229,11 @@ public static class HostDashboardChecks
     private static string Header(HttpResponseMessage answer, string name) =>
         answer.Headers.TryGetValues(name, out var values) ? string.Join(",", values) : "";
 
-    private static FormUrlEncodedContent Form(KeyValuePair<string, string> token, params (string Name, string Value)[] fields) =>
+    internal static FormUrlEncodedContent Form(KeyValuePair<string, string> token, params (string Name, string Value)[] fields) =>
         new(fields.Select(field => new KeyValuePair<string, string>(field.Name, field.Value)).Prepend(token));
 
     /// <summary>The host's browser, also on the public port, whose certificate is this temporary host's own.</summary>
-    private static HttpClient Browser(Home home) => new(PageDump.Wrap(new HttpClientHandler
+    internal static HttpClient Browser(Home home) => new(PageDump.Wrap(new HttpClientHandler
     {
         AllowAutoRedirect = false, UseCookies = true, CookieContainer = new CookieContainer(), UseProxy = false,
         ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
@@ -1243,7 +1243,7 @@ public static class HostDashboardChecks
     /// The firewall read-back as a list: no Amberline rule until the elevation ran (or <see cref="Added"/>), then <see cref="Allowed"/> as
     /// netsh prints them; an elevation replaces them with <see cref="Next"/> when it is set.
     /// </summary>
-    private sealed class FakeFirewall
+    internal sealed class FakeFirewall
     {
         private volatile bool _added;
         public IReadOnlyList<FirewallRule> Allowed { get; set; } = [];

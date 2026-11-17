@@ -114,8 +114,11 @@ internal static class PlayerInstall
     /// </summary>
     internal sealed record Result(Record Record, string Server, string Shortcut, IReadOnlyList<string> Leftovers, IReadOnlyList<string> Stayed);
 
-    internal static string ServerName(string value) => NamePattern.IsMatch(value) && !ReservedName.IsMatch(value) ? value
+    internal static string ServerName(string value) => IsName(value) ? value
         : throw new ArgumentException("The server name must be 1 to 40 letters, digits, spaces, dots, hyphens or underscores, starting and ending with a letter or digit.");
+
+    /// <summary>The desktop file name rule (<see cref="NamePattern"/>, not a reserved device name): also a plain folder name, never a path.</summary>
+    internal static bool IsName(string? value) => value is not null && NamePattern.IsMatch(value) && !ReservedName.IsMatch(value);
 
     /// <summary>A server is known by its certificate pin, never by its address: a new address for the same server replaces its connection.</summary>
     internal static string ServerId(string certificateSha256) => certificateSha256[..16].ToLowerInvariant();
@@ -601,8 +604,12 @@ internal static class PlayerInstall
         File.WriteAllBytes(Path.Combine(toolFolder, WindowlessName), bytes);
     }
 
-    /// <summary>The server's manifest (/bootstrap/client.json), as tools/play-bootstrap.cmd reads it.</summary>
-    private sealed record Manifest(int Protocol, string? Host, int Port, string? CertificateSha256, string? CompanionSha256);
+    /// <summary>
+    /// The server's manifest (/bootstrap/client.json), as tools/play-bootstrap.cmd reads it. NOT RETAIL (batch 856, design Part 1 step 1):
+    /// <paramref name="MovedTo"/> says the server now runs patch 1.0.0.132 (<see cref="ServerMoved"/>); a normal server never sends it.
+    /// </summary>
+    internal sealed record Manifest(int Protocol, string? Host, int Port, string? CertificateSha256, string? CompanionSha256,
+        ServerMoved.Target? MovedTo = null);
 
     /// <summary>
     /// The shortcut's quick check, before play: the manifest over the pinned HTTPS port of the server's connection. A newer player tool
@@ -612,16 +619,42 @@ internal static class PlayerInstall
     /// </summary>
     internal static async Task<string?> StageUpdateAsync(string install, string serverFolder, CancellationToken cancel)
     {
-        var path = Path.Combine(serverFolder, "server.json");
-        var connection = Program.ReadRemoteInvitation(path);
-        using var client = AirRemoteProxy.CreatePinnedClient(Convert.FromHexString(connection.CertificateSha25664hex));
-        client.Timeout = TimeSpan.FromSeconds(10);
-        var origin = new UriBuilder(Uri.UriSchemeHttps, connection.Host, connection.Port).Uri;
-        var manifest = JsonSerializer.Deserialize<Manifest>(await GetAsync(client, new Uri(origin, "/bootstrap/client.json"), 1 << 20, cancel), Json)
+        var (connection, manifest) = await ReadServerAsync(serverFolder, cancel);
+        return await StageUpdateAsync(install, serverFolder, connection, manifest, cancel);
+    }
+
+    /// <summary>
+    /// The connection in <paramref name="serverFolder"/>'s <c>server.json</c>, read once, and that server's manifest
+    /// (<see cref="ReadManifestAsync(string, int, string, CancellationToken)"/>): the start passes both on, so every step uses the same one.
+    /// </summary>
+    internal static async Task<(AirRemoteInvitation Connection, Manifest Manifest)> ReadServerAsync(string serverFolder, CancellationToken cancel)
+    {
+        var connection = Program.ReadRemoteInvitation(Path.Combine(serverFolder, "server.json"));
+        return (connection, await ReadManifestAsync(connection.Host, connection.Port, connection.CertificateSha25664hex, cancel));
+    }
+
+    /// <summary>
+    /// The manifest over the pinned HTTPS port <paramref name="port"/> of <paramref name="host"/>. It must be protocol 1 and name that port
+    /// and pin: another port or pin is refused.
+    /// </summary>
+    internal static async Task<Manifest> ReadManifestAsync(string host, int port, string pin, CancellationToken cancel)
+    {
+        using var client = PinnedClient(pin);
+        var manifest = JsonSerializer.Deserialize<Manifest>(await GetAsync(client, new Uri(Origin(host, port), "/bootstrap/client.json"), 1 << 20, cancel, ManifestBudget), Json)
             ?? throw new InvalidDataException("The server published an empty manifest.");
-        if (manifest.Protocol != 1 || manifest.Port != connection.Port ||
-            !string.Equals(manifest.CertificateSha256, connection.CertificateSha25664hex, StringComparison.OrdinalIgnoreCase))
+        if (manifest.Protocol != 1 || manifest.Port != port || !string.Equals(manifest.CertificateSha256, pin, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The server's manifest does not match this connection.");
+        return manifest;
+    }
+
+    /// <summary>
+    /// The update after <see cref="ReadServerAsync"/>: the advised host is kept (the stored file is rewritten with it, its other fields as
+    /// they are), and a newer player tool is staged from <paramref name="connection"/> (see above).
+    /// </summary>
+    internal static async Task<string?> StageUpdateAsync(string install, string serverFolder, AirRemoteInvitation connection, Manifest manifest,
+        CancellationToken cancel)
+    {
+        var path = Path.Combine(serverFolder, "server.json");
         if (manifest.Host is { } advised && !string.Equals(advised, connection.Host, StringComparison.OrdinalIgnoreCase))
         {
             (connection with { Host = advised }).Validate();
@@ -630,8 +663,7 @@ internal static class PlayerInstall
             PlayerMode.WriteJson(path, stored);
             Console.WriteLine("update: the server advised a new address; the connection keeps it");
         }
-        var sha = manifest.CompanionSha256?.ToUpperInvariant();
-        if (sha is not { Length: 64 } || !sha.All(char.IsAsciiHexDigit)) throw new InvalidDataException("The server published no valid SHA-256 for the player tool.");
+        var sha = ToolSha256(manifest);
         var next = Path.Combine(install, ToolFolder + ".next");
         if (Mark(Path.Combine(install, ToolFolder)) == sha)
         {
@@ -639,40 +671,90 @@ internal static class PlayerInstall
             return null;
         }
         if (Mark(next) == sha && File.Exists(Path.Combine(next, WindowlessName))) return next;
-        var archive = await GetAsync(client, new Uri(origin, "/bootstrap/companion.zip"), 512 << 20, cancel);
-        if (Convert.ToHexString(SHA256.HashData(archive)) != sha)
-            throw new InvalidDataException("The downloaded player tool does not match the SHA-256 the server published; nothing was changed.");
-        TryDelete(next + ".sha256");
-        if (!TryDeleteTree(next)) throw new IOException("An earlier update of the player tool is still in use.");
-        using (var zip = new MemoryStream(archive)) ZipFile.ExtractToDirectory(zip, next);
-        if (!File.Exists(Path.Combine(next, ToolExecutable)))
-        {
-            TryDeleteTree(next);
-            throw new InvalidDataException($"The player tool from the server has no {ToolExecutable}.");
-        }
+        await DownloadToolAsync(connection.Host, connection.Port, connection.CertificateSha25664hex, sha, next, cancel);
         WriteWindowless(next);
         File.WriteAllText(next + ".sha256", sha);
         return next;
     }
 
-    internal static async Task<byte[]> GetAsync(HttpClient client, Uri uri, long limit, CancellationToken cancel)
+    /// <summary>The player tool's SHA-256 the manifest publishes, in upper case.</summary>
+    internal static string ToolSha256(Manifest manifest) =>
+        manifest.CompanionSha256?.ToUpperInvariant() is { Length: 64 } sha && sha.All(char.IsAsciiHexDigit) ? sha
+            : throw new InvalidDataException("The server published no valid SHA-256 for the player tool.");
+
+    /// <summary>
+    /// The server's player tool over its pinned HTTPS port, checked against <paramref name="sha"/> before anything is written, then
+    /// unpacked into <paramref name="folder"/> (made anew), which must hold the tool's executable.
+    /// </summary>
+    internal static async Task DownloadToolAsync(string host, int port, string pin, string sha, string folder, CancellationToken cancel)
     {
-        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancel);
-        if (response.StatusCode != HttpStatusCode.OK) throw new HttpRequestException($"The server answered HTTP {(int)response.StatusCode}.", null, response.StatusCode);
-        if (response.Content.Headers.ContentLength > limit) throw new InvalidDataException("The server's response is too large.");
-        await using var stream = await response.Content.ReadAsStreamAsync(cancel);
-        using var buffer = new MemoryStream();
-        var chunk = new byte[81920];
-        int read;
-        while ((read = await stream.ReadAsync(chunk, cancel)) > 0)
+        byte[] archive;
+        using (var client = PinnedClient(pin)) archive = await GetAsync(client, new Uri(Origin(host, port), "/bootstrap/companion.zip"), 512 << 20, cancel, ToolBudget);
+        if (Convert.ToHexString(SHA256.HashData(archive)) != sha)
+            throw new InvalidDataException("The downloaded player tool does not match the SHA-256 the server published; nothing was changed.");
+        TryDelete(folder + ".sha256");
+        if (!TryDeleteTree(folder)) throw new IOException("An earlier update of the player tool is still in use.");
+        using (var zip = new MemoryStream(archive)) ZipFile.ExtractToDirectory(zip, folder);
+        if (!File.Exists(Path.Combine(folder, ToolExecutable)))
         {
-            if (buffer.Length + read > limit) throw new InvalidDataException("The server's response is too large.");
-            buffer.Write(chunk, 0, read);
+            TryDeleteTree(folder);
+            throw new InvalidDataException($"The player tool from the server has no {ToolExecutable}.");
         }
-        return buffer.ToArray();
     }
 
-    private static string? Mark(string folder)
+    /// <summary>The HTTPS client for one server: only its certificate (<paramref name="pin"/>), no redirect, cookie or proxy.</summary>
+    private static HttpClient PinnedClient(string pin)
+    {
+        var client = AirRemoteProxy.CreatePinnedClient(Convert.FromHexString(pin));
+        client.Timeout = TimeSpan.FromSeconds(10);
+        return client;
+    }
+
+    private static Uri Origin(string host, int port) => new UriBuilder(Uri.UriSchemeHttps, host, port).Uri;
+
+    /// <summary>
+    /// NOT RETAIL (batch 856a, security review): the time a whole read may take, body included. Past the headers
+    /// (<see cref="HttpCompletionOption.ResponseHeadersRead"/>) the client's 10 s timeout no longer applies, so a server that sends headers and
+    /// then stalls would hold the start (or the "Setting up" window) for ever. The manifest gets the client's 10 s; the player tool, up to
+    /// 512 MB (today's about 64 MB), gets 10 minutes: 512 MB at about 0.9 MB/s.
+    /// </summary>
+    internal static readonly TimeSpan ManifestBudget = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan ToolBudget = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// The body of <paramref name="uri"/>, up to <paramref name="limit"/> bytes. With a <paramref name="budget"/>, the whole read must end
+    /// within it; one that does not is a <see cref="TaskCanceledException"/> with a <see cref="TimeoutException"/> inside, as the client's
+    /// own timeout is (the start then says "Can't reach").
+    /// </summary>
+    internal static async Task<byte[]> GetAsync(HttpClient client, Uri uri, long limit, CancellationToken cancel, TimeSpan? budget = null)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        if (budget is { } whole) timeout.CancelAfter(whole);
+        var token = timeout.Token;
+        try
+        {
+            using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, token);
+            if (response.StatusCode != HttpStatusCode.OK) throw new HttpRequestException($"The server answered HTTP {(int)response.StatusCode}.", null, response.StatusCode);
+            if (response.Content.Headers.ContentLength > limit) throw new InvalidDataException("The server's response is too large.");
+            await using var stream = await response.Content.ReadAsStreamAsync(token);
+            using var buffer = new MemoryStream();
+            var chunk = new byte[81920];
+            int read;
+            while ((read = await stream.ReadAsync(chunk, token)) > 0)
+            {
+                if (buffer.Length + read > limit) throw new InvalidDataException("The server's response is too large.");
+                buffer.Write(chunk, 0, read);
+            }
+            return buffer.ToArray();
+        }
+        catch (OperationCanceledException exception) when (budget is not null && timeout.IsCancellationRequested && !cancel.IsCancellationRequested)
+        {
+            throw new TaskCanceledException($"The server did not finish answering within {budget.Value.TotalSeconds:0} seconds.",
+                new TimeoutException(exception.Message, exception));
+        }
+    }
+
+    internal static string? Mark(string folder)
     {
         try { return File.ReadAllText(folder + ".sha256").Trim().ToUpperInvariant(); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { return null; }

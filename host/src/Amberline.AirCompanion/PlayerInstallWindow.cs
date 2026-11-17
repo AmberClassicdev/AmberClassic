@@ -26,6 +26,17 @@ internal static class PlayerInstallWindow
         var connection = Program.ReadRemoteInvitation(Path.GetFullPath(file)) with { Token64hex = "", Bearer = null, RegistrationCode = null };
         var name = PlayerInstall.ServerName(Program.Option(args, "--server-name") ?? PlayerInstall.DefaultServerName);
         var tool = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
+        // NOT RETAIL (batch 856, design Part 1 step 2): a server that moved to patch 1.0.0.132 says so before anything is installed. Play.cmd
+        // reports any exit but 0 as a failure, so a started 1.0.0.132 setup ends with 0. This console is the Play file's: the steps go to the
+        // install log, which the dialogs name.
+        var profile = PlayerProfile.Current();
+        using (var status = new StatusWindow(name))
+            if (ServerMoved.BeforeInstallAsync(connection, name, profile.InstallLog, ServerMoved.Ui.Windows(status, line => PlayerInstall.Log(profile, line)))
+                .GetAwaiter().GetResult() is { } moved)
+            {
+                if (moved != 0) Console.WriteLine($"{name} now runs patch 1.0.0.132. To set it up later, double-click the Play file again.");
+                return moved;
+            }
         var finished = false;
         OnWindowsThread(() =>
         {
@@ -108,6 +119,36 @@ internal static class PlayerInstallWindow
         return again;
     }
 
+    /// <summary>
+    /// NOT RETAIL (batch 856, design Part 1 step 4): the server now runs patch 1.0.0.132. True for <see cref="SetUpButton"/> (or
+    /// <see cref="StartItButton"/> when this PC has that install), the default; <see cref="NotNowButton"/>, Escape or closing the dialog end it.
+    /// </summary>
+    internal static bool AskMoved(ServerMoved.Question question)
+    {
+        var go = false;
+        OnWindowsThread(() =>
+        {
+            var accept = new TaskDialogButton(question.Installed ? StartItButton : SetUpButton);
+            var page = new TaskDialogPage
+            {
+                Caption = question.Title,
+                Heading = question.WhatHappened,
+                Text = question.WhatToDo,
+                Icon = TaskDialogIcon.Information,
+                AllowCancel = true,
+                SizeToContent = true,
+            };
+            page.Buttons.Add(accept);
+            page.Buttons.Add(new TaskDialogButton(NotNowButton));
+            page.DefaultButton = accept;
+            go = TaskDialog.ShowDialog(page) == accept;
+        });
+        return go;
+    }
+
+    internal const string SetUpButton = "Set up";
+    internal const string StartItButton = "Start it";
+    internal const string NotNowButton = "Not now";
     internal const string TryAgainButton = "Try again";
     internal const string CloseAndStart = "Close and start";
     internal const string ClassicAgain = "Open the classic launcher again";

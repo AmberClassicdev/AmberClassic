@@ -22,7 +22,8 @@ public sealed record ElevatedCommand(string FileName, string Arguments);
 /// What one press of the allow button did: the state after the run (null when the prompt was declined or nothing ran), whether the Windows
 /// prompt was declined, or the card of a refusal (nothing elevated, because a program path has a character the command line cannot carry).
 /// </summary>
-public sealed record FirewallAttempt(FirewallState? State, bool Declined, FirewallProblem? Refusal);
+/// Batch 856: <see cref="Shown"/>, the read-back the state came from, so a caller can judge a part of the rules on its own.
+public sealed record FirewallAttempt(FirewallState? State, bool Declined, FirewallProblem? Refusal, IReadOnlyList<ShownRule>? Shown = null);
 
 /// <summary>
 /// What the read-back says about the host's two rules: the worst of the two, in this order (a later value is worse).
@@ -63,6 +64,11 @@ public static class HostFirewall
     // or remove the 1.0.0.126 install's ("Amberline sign-in") on the same PC.
     public const string SignInRule = Folders.FolderMove.HostName + " sign-in";
     public const string GamesRule = Folders.FolderMove.HostName + " games";
+    /// <summary>
+    /// NOT RETAIL (batch 856): "Amberline 132 old sign-in", the third rule the Allow button adds while the host guides the 1.0.0.126 line's old
+    /// shortcuts here (<see cref="HostOldShortcuts"/>): TCP on that line's friends' port, for this Platform.
+    /// </summary>
+    public const string OldSignInRule = Folders.FolderMove.HostName + " old sign-in";
 
     /// <summary>ERROR_CANCELLED: the user declined the Windows prompt.</summary>
     private const int ErrorCancelled = 1223;
@@ -87,6 +93,11 @@ public static class HostFirewall
         ];
     }
 
+    /// <summary>Batch 856: the old sign-in rule (<see cref="OldSignInRule"/>) for <paramref name="platformProgram"/> on <paramref name="port"/>.</summary>
+    public static FirewallRule OldSignIn(string platformProgram, int port) => port is < 1 or > 65535
+        ? throw new ArgumentOutOfRangeException(nameof(port), "The old sign-in port is 1 to 65535.")
+        : new FirewallRule(OldSignInRule, FullPath(platformProgram), "TCP", $"{port}");
+
     /// <summary>
     /// The refusal card when a program path has a character that cmd or netsh could read as something else, or null when every path is
     /// safe for the command line. Refused: any character outside plain ASCII, a control character, %, !, ^ and the double quote. A
@@ -99,7 +110,7 @@ public static class HostFirewall
             "Amberline cannot ask Windows Firewall to allow it from this folder: its path has a character Windows cannot pass safely.",
             "Move Amberline to a folder whose path has only plain letters, digits, spaces, dots and dashes, then try again. " +
             "Or allow its two programs by hand in Windows Defender Firewall (" +
-            string.Concat(rules.Select(rule => $"{rule.Protocol} {rule.LocalPort} for {(rule.Name == SignInRule ? "sign-in" : "games")}, ")) +
+            string.Concat(rules.Select(rule => $"{rule.Protocol} {rule.LocalPort} for {rule.Name switch { SignInRule => "sign-in", OldSignInRule => "old sign-in", _ => "games" }}, ")) +
             "every network type).");
     }
 
@@ -126,13 +137,14 @@ public static class HostFirewall
     }
 
     /// <summary>
-    /// Uninstall's one elevated command (batch 641): deletes those of the two rules that the read-back <paramref name="shown"/> holds, by
-    /// their fixed names, with the same cmd and netsh as <see cref="Command"/>. Null when neither rule exists: nothing to ask Windows.
+    /// Uninstall's one elevated command (batch 641): deletes those of the rules that the read-back <paramref name="shown"/> holds, by
+    /// their fixed names, with the same cmd and netsh as <see cref="Command"/>. Null when no rule exists: nothing to ask Windows. Batch 856:
+    /// the old sign-in rule too (<see cref="OldSignInRule"/>; only the 1.0.0.132 line ever adds it).
     /// </summary>
     public static ElevatedCommand? RemoveCommand(IReadOnlyList<ShownRule> shown, string systemDirectory)
     {
         var netsh = Netsh(systemDirectory);
-        var steps = new[] { SignInRule, GamesRule }.Where(name => shown.Any(block => Same(block.Name, name)))
+        var steps = new[] { SignInRule, GamesRule, OldSignInRule }.Where(name => shown.Any(block => Same(block.Name, name)))
             .Select(name => $"\"{netsh}\" advfirewall firewall delete rule name=\"{name}\"").ToArray();
         return steps.Length == 0 ? null : new ElevatedCommand(Path.Combine(systemDirectory, "cmd.exe"), $"/d /c \"{string.Join(" && ", steps)}\"");
     }
@@ -292,11 +304,12 @@ public static class HostFirewall
         run ??= RunElevatedAsync;
         var before = await read(cancel);
         var state = Evaluate(rules, before);
-        if (state is FirewallState.Allowed or FirewallState.Blocked) return new FirewallAttempt(state, false, null);
-        if (Refusal(rules) is { } refusal) return new FirewallAttempt(null, false, refusal);
+        if (state is FirewallState.Allowed or FirewallState.Blocked) return new FirewallAttempt(state, false, null, before);
+        if (Refusal(rules) is { } refusal) return new FirewallAttempt(null, false, refusal, before);
         if (await run(Command(rules, ExistingNames(rules, before), Environment.SystemDirectory), cancel) is null)
-            return new FirewallAttempt(null, true, null);
-        return new FirewallAttempt(Evaluate(rules, await read(cancel)), false, null);
+            return new FirewallAttempt(null, true, null, before);
+        var after = await read(cancel);
+        return new FirewallAttempt(Evaluate(rules, after), false, null, after);
     }
 
     /// <summary>A program path must be a full path; characters that cmd would misread are not an error here, <see cref="Refusal"/> refuses them.</summary>

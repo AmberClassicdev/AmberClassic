@@ -134,8 +134,9 @@ public sealed class HostFriendLight
 /// The network panel's last test. Null fields were not reached yet; <see cref="RouterDone"/> says whether the router part finished;
 /// <see cref="HomeOnly"/>, that it was left out because the host chose the home network only.
 /// </summary>
+/// Batch 856: <see cref="OldSignIn"/>, the state of the panel's extra rules (<see cref="HostNetworkPanel.Extra"/>), judged apart from the firewall check.
 public sealed record NetworkResult(FirewallState? Firewall, FirewallProblem? FirewallCard, bool RouterDone, UpnpGateway? Router,
-    UpnpProblem? RouterProblem, IPAddress? External, IPAddress? RouterAddress, IPAddress? Computer, bool HomeOnly = false)
+    UpnpProblem? RouterProblem, IPAddress? External, IPAddress? RouterAddress, IPAddress? Computer, bool HomeOnly = false, FirewallState? OldSignIn = null)
 {
     public static NetworkResult Pending { get; } = new(null, null, false, null, null, null, null, null);
 }
@@ -163,6 +164,17 @@ public sealed class HostNetworkPanel(HostNetwork? network, Func<IReadOnlyList<Fi
     public IReadOnlyList<FirewallRule> Rules => rules();
     public NetworkResult Last { get; private set; } = NetworkResult.Pending;
 
+    /// <summary>
+    /// NOT RETAIL (batch 856): rules the Allow button adds beside <see cref="Rules"/> that the firewall check does not ask for (the old sign-in
+    /// rule while the host guides old 1.0.0.126 shortcuts here, <see cref="HostOldShortcuts"/>); their state is <see cref="NetworkResult.OldSignIn"/>.
+    /// </summary>
+    public Func<IReadOnlyList<FirewallRule>>? Extra { get; init; }
+
+    /// <summary>Batch 856: runs at the start of each test (the stand-in tries again, so the router hears of its port in the same test).</summary>
+    public Func<CancellationToken, Task>? BeforeTest { get; init; }
+
+    private FirewallState? ExtraState(IReadOnlyList<ShownRule>? shown) => Extra?.Invoke() is { Count: > 0 } extra ? HostFirewall.Evaluate(extra, shown) : null;
+
     /// <summary>One whole test; the page shows each part as it finishes. A router that stopped answering is searched for again.</summary>
     public async Task TestAsync(CancellationToken cancel)
     {
@@ -170,11 +182,12 @@ public sealed class HostNetworkPanel(HostNetwork? network, Func<IReadOnlyList<Fi
         await _busy.WaitAsync(cancel);
         try
         {
+            if (BeforeTest is { } before) await before(cancel);
             Last = NetworkResult.Pending;
             IReadOnlyList<ShownRule>? shown = null;
             try { shown = await network.ReadFirewall(cancel); }
             catch (InvalidOperationException) { } // netsh did not start: the rules are unreadable
-            Last = Last with { Firewall = HostFirewall.Evaluate(rules(), shown) };
+            Last = Last with { Firewall = HostFirewall.Evaluate(rules(), shown), OldSignIn = ExtraState(shown) };
             if (homeOnly?.Invoke() == true)
             {
                 // Friends on the home network reach this PC directly: the router keeps no port for Amberline.
@@ -227,8 +240,15 @@ public sealed class HostNetworkPanel(HostNetwork? network, Func<IReadOnlyList<Fi
         await _busy.WaitAsync(cancel);
         try
         {
-            var attempt = await HostFirewall.AllowAsync(rules(), cancel, network.ReadFirewall, network.RunElevated);
-            Last = Last with { Firewall = attempt.State ?? Last.Firewall, FirewallCard = attempt.Refusal ?? (attempt.Declined ? Declined : null) };
+            // Batch 856: one prompt for every rule, the extra ones too; the firewall check still judges only its own rules.
+            var main = rules();
+            var attempt = await HostFirewall.AllowAsync([.. main, .. Extra?.Invoke() ?? []], cancel, network.ReadFirewall, network.RunElevated);
+            Last = Last with
+            {
+                Firewall = attempt.State is null ? Last.Firewall : HostFirewall.Evaluate(main, attempt.Shown),
+                OldSignIn = attempt.State is null ? Last.OldSignIn : ExtraState(attempt.Shown),
+                FirewallCard = attempt.Refusal ?? (attempt.Declined ? Declined : null),
+            };
         }
         finally { _busy.Release(); }
     }
@@ -318,6 +338,7 @@ public sealed class HostDashboard : IAsyncDisposable
     private readonly HashSet<Guid> _demoEnded = new();
     // DIAGNOSTICS: the demo switch as this start read it (HostLoop.DemoData): the board, the count and End game follow it for the whole run.
     private readonly bool _demoData;
+    private readonly HostOldShortcuts? _old;
 
     /// <param name="platformProgram">The program the sign-in rule names; the running one by default.</param>
     /// <param name="maxGames">How many games may run at once now (<see cref="GameManager.MaxGames"/>); the settings' value by default.</param>
@@ -325,9 +346,12 @@ public sealed class HostDashboard : IAsyncDisposable
     /// <param name="board">The game cards and the waiting-lobbies line (<see cref="PlatformGames.HostBoard"/>); none by default.</param>
     /// <param name="endGame">Ends a running game (<see cref="GameManager.StopAsync"/> as the admin); none by default.</param>
     /// <param name="demoData">DIAGNOSTICS: the demo switch as this start read it (<see cref="HostLoop.DemoData"/>); off by default.</param>
+    /// <param name="oldShortcuts">NOT RETAIL (batch 856): the stand-in on the old 1.0.0.126 port (only the 1.0.0.132 line passes one): its rule
+    /// for the Allow button, its port for the router and its line on Status; none by default.</param>
     public HostDashboard(HostLoop loop, PlatformSettings settings, Func<PlatformManagement.OnlineRow[]> online,
         Func<IReadOnlyList<DashboardGame>> games, string? platformProgram = null, Func<int>? maxGames = null,
-        HostSelfRegistration? signUp = null, Func<DashboardBoard>? board = null, Func<Guid, Task>? endGame = null, bool demoData = false)
+        HostSelfRegistration? signUp = null, Func<DashboardBoard>? board = null, Func<Guid, Task>? endGame = null, bool demoData = false,
+        HostOldShortcuts? oldShortcuts = null)
     {
         _loop = loop;
         _settings = settings;
@@ -338,9 +362,19 @@ public sealed class HostDashboard : IAsyncDisposable
         _endGame = endGame ?? (_ => Task.CompletedTask);
         _demoData = demoData;
         _maxGames = maxGames ?? (() => settings.MaxGames);
+        _old = oldShortcuts;
         var program = platformProgram ?? Environment.ProcessPath!;
         Network = new HostNetworkPanel(loop.Network,
-            () => HostFirewall.Rules(program, settings.ServerExecutable, settings.RemotePort, settings.FirstGamePort, _maxGames()), RouterPorts, () => HomeOnly);
+            () => HostFirewall.Rules(program, settings.ServerExecutable, settings.RemotePort, settings.FirstGamePort, _maxGames()), RouterPorts, () => HomeOnly)
+        {
+            Extra = oldShortcuts is null ? null : () => oldShortcuts.Rule(program) is { } rule ? [rule] : [],
+            BeforeTest = oldShortcuts is null ? null : cancel => oldShortcuts.RefreshAsync(cancel),
+        };
+        if (oldShortcuts is not null)
+        {
+            oldShortcuts.Firewall = () => Network.Last.OldSignIn;
+            oldShortcuts.Changed = TestAgain;
+        }
         Hidden = new HostHidden(loop.Paths.Data);
         Attention = new HostAttention(loop, games, Network.TestAsync, Hidden);
     }
@@ -356,11 +390,14 @@ public sealed class HostDashboard : IAsyncDisposable
     /// What the router forwards: the sign-in port, the game ports, and the port of a game still running above a lowered range, which a
     /// lower Games at the same time never ends (batch 684).
     /// ponytail: that port stays forwarded until the next test after the game ends (Test again, a Settings save, a restart).
+    /// Batch 856: last, the old 1.0.0.126 port while the stand-in runs (<see cref="HostOldShortcuts.RouterPort"/>), so a router that refuses it
+    /// has already forwarded every port of this server.
     /// </summary>
     private IReadOnlyList<UpnpPort> RouterPorts()
     {
         var ports = UpnpGateway.HostPorts(_settings.RemotePort, _settings.FirstGamePort, _maxGames());
-        return [.. ports, .. _games().Select(game => new UpnpPort("UDP", game.Port)).Where(port => port.Port > 0 && !ports.Contains(port)).Distinct()];
+        return [.. ports, .. _games().Select(game => new UpnpPort("UDP", game.Port)).Where(port => port.Port > 0 && !ports.Contains(port)).Distinct(),
+            .. _old?.RouterPort is { } old && !ports.Contains(old) ? [old] : Array.Empty<UpnpPort>()];
     }
 
     /// <summary>A test now, in the background: the home-network choice changed, or Settings saved another Games at the same time (batch 684).</summary>
@@ -527,6 +564,9 @@ public sealed class HostDashboard : IAsyncDisposable
         else if (fromHome is { } near)
             Add("friend", "waiting", $"A player on your home network reached Amberline {Ago(now - near)}. Waiting for a player from the internet.");
         else Add("friend", "waiting", "Waiting for the first player to start the Play file.");
+        // NOT RETAIL (batch 856): while the host guides old 1.0.0.126 shortcuts here, one line says whether they are (design Part 2, step 6). It is
+        // never "bad": the headline, the network line and the firewall check stay as they were.
+        if (_old?.Line() is { } guiding) Add("guiding", guiding.Running ? "ok" : "waiting", guiding.Text);
 
         var checking = checks.Any(check => check.State == "checking");
         var open = checks.Where(check => !hiddenChecks.Contains(check.Id)).ToArray();
