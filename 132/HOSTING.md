@@ -284,7 +284,7 @@ After a restart the page comes back by itself; after a stop, start Amberline aga
 
 **Online now** lists who is logged in.
 
-**Network** lists five checks, each with its light:
+**Network** lists five checks, each with its light (a sixth while Amberline guides old 1.0.0.126 shortcuts: see [Ports, firewall and the guiding line](#ports-firewall-and-the-guiding-line)):
 
 1. **Amberline is listening on this PC**.
 2. **Windows Firewall lets players in**.
@@ -301,7 +301,7 @@ needs one:
 
 - **Allow through Windows Firewall**: Windows asks once, for a Microsoft program named **Windows Command Processor**. Press
   **Yes**; the button says **Waiting…** until you answer. Amberline then adds two rules, **Amberline 132 sign-in** and
-  **Amberline 132 games** (a 1.0.0.126 Amberline keeps its own two).
+  **Amberline 132 games** (a 1.0.0.126 Amberline keeps its own two), and a third, **Amberline 132 old sign-in**, while it guides old 1.0.0.126 shortcuts.
 - **Test again**: runs the network checks again (up to a minute), for example after you changed something on your router.
 - **Download the Play file**, **Make new Play files**, **Hide** and **Open the support log**: see the codes in
   [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
@@ -353,7 +353,7 @@ Your own login is not in the list: it is the one you play with, and [Advanced](#
 Above the list are **Add a user**, **Get the Play file** (once your address is known) and **Copy sign-up link** (while sign-ups are on).
 Type in **Search users** to filter the list as you type. **Copy the My account link** copies the address where users change their own
 password or delete their login (see [My account](#my-account)). While your Amberline for 1.0.0.126 has a login that is not here yet,
-**Copy the logins** stands above the list (see [Moving from the 1.0.0.126 line](#moving-from-the-100126-line)).
+**Copy the logins** stands above the list (see [Moving from the 1.0.0.126 line](#moving-from-the-100126-line)). While your Amberline for 1.0.0.126 is on this PC, a section named **Old 1.0.0.126 shortcuts** holds **Move my 1.0.0.126 players here** as well (see [Move my 1.0.0.126 players here](#move-my-100126-players-here)).
 
 - **New password**: for a user who lost theirs. The old password stops working at once, and the user is logged out. The new one is
   shown once, in a message to send.
@@ -598,7 +598,7 @@ The easy way: **Settings**, **Uninstall Amberline**, or `Uninstall Amberline.cmd
    AIR client in it.
 3. Delete the **Amberline 132** icon on your desktop.
 4. Delete the small file `%LOCALAPPDATA%\Amberline 132\install.json`.
-5. If you let Amberline through Windows Firewall, delete its two rules, **Amberline 132 sign-in** and **Amberline 132 games**, in
+5. If you let Amberline through Windows Firewall, delete its rules, **Amberline 132 sign-in**, **Amberline 132 games** and, if it guided old 1.0.0.126 shortcuts, **Amberline 132 old sign-in**, in
    Windows Defender Firewall, **Advanced settings**, **Inbound Rules**.
 
 A 1.0.0.126 Amberline on the same PC has its own folder, icon, file and rules without "132": leave them.
@@ -627,8 +627,51 @@ its icon, its logins and everything else) stays as it is and keeps working.
 - **Ports**: this line has its own, sign-in TCP 8491 and games UDP 5319 to 5322 (1.0.0.126: TCP 8391 and UDP 5219 to 5222), and its
   own Windows Firewall rules. If you forwarded the 1.0.0.126 ports on your router by hand, forward these too
   ([Your router](#your-router)). Both use chat port 5222, so only one Amberline runs at a time.
-- **Your users need this server's Play file**: the old one starts the 1.0.0.126 server. Send everyone the new Play file
-  (**Get the Play file** on [Users](#users)), and tell them their username and password stay the same.
+- **New users need this server's Play file.** The 1.0.0.126 Play file is for the 1.0.0.126 server, and it never plays this one.
+  Send new users this server's Play file (**Get the Play file** on [Users](#users)). While guiding is on, a user who still has the
+  1.0.0.126 Play file is offered this server instead: see [What users see](#what-users-see).
+
+### Move my 1.0.0.126 players here
+
+Amberline can guide your users' old 1.0.0.126 desktop icons to this server ("guiding"). Each of them then offers to set up this
+server, and the user signs in with the same username and password. While your Amberline for 1.0.0.126 is on this PC, [Users](#users)
+has a section named **Old 1.0.0.126 shortcuts**. Its button, **Move my 1.0.0.126 players here**, copies the logins that are not here
+yet, then turns guiding on.
+
+1. Keep your 1.0.0.126 Amberline installed, updated to 0.1.25 or later, and closed. It never needs to run. Leave it in its folder
+   (`C:\Amberline` unless you chose another).
+2. Keep this Amberline running. Guiding works only while it runs. Once it is on, guiding stays on when you restart Amberline,
+   until you press **Stop guiding old shortcuts**.
+3. Press **Move my 1.0.0.126 players here**. If the copy is refused, guiding stays off and the page says why. A copy is refused, for
+   example, while your 1.0.0.126 Amberline runs, or when its files can be changed by other people on this PC or are links. If there
+   is nothing to copy, guiding still turns on.
+
+Pressing the button again later copies the logins made on 1.0.0.126 since. **Stop guiding old shortcuts** (on **Users**, while
+guiding is on) turns guiding off at once. Then old shortcuts cannot reach this server. Guiding works only for the Amberline on the
+PC you host from: a rented server cannot do it, because both Amberlines must be on one PC.
+
+### What users see
+
+- Their old desktop icon (or old Play file) may first update its player tool. Then it shows the server's name and **now runs patch
+  1.0.0.132 (January 2012).** It asks **Set it up now?** and says **You sign in with the same username and password as before. Your
+  1.0.0.126 setup stays.**
+- **Set up** opens the 1.0.0.132 setup window. They give it the 1.0.0.132 client zip, or use the copy you share (see
+  [Game files](#game-files)). Then they sign in with the same username and password.
+- If their PC already has that 1.0.0.132 setup, the dialog asks **It is set up on this PC already. Start it?** and offers
+  **Start it** instead of **Set up**.
+- **Not now** starts nothing.
+
+### Ports, firewall and the guiding line
+
+- **Router.** While guiding is on, Amberline also asks your router (with UPnP) to send TCP 8391, the 1.0.0.126 sign-in port, to
+  this PC. If you forwarded the 1.0.0.126 ports by hand, that forwarding already covers TCP 8391.
+- **Windows Firewall.** **Allow through Windows Firewall** (on **Users**, when the guiding line asks for it, or on the dashboard)
+  also adds **Amberline 132 old sign-in**, a rule for TCP 8391. Windows asks once, as before. Without that rule, only the guiding
+  line says so: **Windows Firewall lets players in** does not change.
+- **The guiding line.** While guiding is on, the dashboard's **Network** list has a sixth line. It shows **Old 1.0.0.126 shortcuts
+  are guided here** with a green light, or else the reason it is not there yet. **Users** shows the same line. The reasons, and what
+  to do about each, are in [TROUBLESHOOTING.md](TROUBLESHOOTING.md#old-100126-shortcuts-on-the-network-list). The line is checked
+  again every 5 minutes and when you choose **Test again**.
 
 ## A rented server
 

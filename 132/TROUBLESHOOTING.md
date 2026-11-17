@@ -300,6 +300,26 @@ Each of these ends with **so nothing was installed**. The Amberline you have kee
 - **The window of the last update is still open: let it finish or close it, then try again.** It is the window an earlier
   **Update now** opened (look on the taskbar).
 
+### Old 1.0.0.126 shortcuts on the Network list
+
+While Amberline guides old 1.0.0.126 shortcuts, these lines show on the dashboard's **Network** list (see
+[Moving from the 1.0.0.126 line](HOSTING.md#moving-from-the-100126-line)). They wait; they are not in **Needs your attention**.
+Amberline checks them again every 5 minutes, and when you choose **Test again**.
+
+- **Your Amberline for 1.0.0.126 was not found**. Guiding counts only the 1.0.0.126 Amberline that your Windows account
+  installed, or one in `C:\Amberline` that other people on this PC cannot change. An install whose folders or files are links does
+  not count. If you uninstalled it, choose **Stop guiding old shortcuts** on **Users**.
+- **Update your Amberline for 1.0.0.126 to 0.1.25 or later**. Old shortcuts can be offered the move only by a 1.0.0.126 Amberline
+  of version 0.1.25 or later. On its page, choose **Updates**, then **Update now**. When the update has started it, close its
+  window, then choose **Test again** here.
+- **Close your Amberline for 1.0.0.126**. Only one of the two lines runs at a time. Close the 1.0.0.126 window. Guiding starts
+  within 5 minutes, or when you choose **Test again**.
+- **Port 8391 is in use by another program**. (The number is the port.) Another program on this PC is using TCP port 8391. Close
+  it, then choose **Test again**.
+- **Allow it through Windows Firewall**. Guiding needs its own rule, **Amberline 132 old sign-in**. Choose **Allow through
+  Windows Firewall** on **Users**, then **Yes** when Windows asks ([A-NET-02](#a-net-02)). The dashboard's **Windows Firewall lets
+  players in** check does not change.
+
 ## For players
 
 ### The sign-up page

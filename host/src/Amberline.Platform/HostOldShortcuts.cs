@@ -100,6 +100,12 @@ public sealed class HostOldShortcuts : IAsyncDisposable
     public Action<string>? BeforeOpen { get; set; }
 
     /// <summary>
+    /// <see cref="MovedTo"/>'s player folder: this line's (<see cref="PlatformBootstrap.PlayerFolderName"/>, "Amberline 132 Player" on 1.0.0.132).
+    /// DIAGNOSTICS: settable, so the end-to-end check names a folder the tool of the line it runs on accepts (a tool refuses its own line's).
+    /// </summary>
+    public string PlayerFolder { get; init; } = PlatformBootstrap.PlayerFolderName;
+
+    /// <summary>
     /// The guiding line (design Part 2, step 6): null while guiding is off or before the first try; else whether the stand-in runs with its
     /// rule allowed, and the words of Status and Users.
     /// </summary>
@@ -358,7 +364,7 @@ public sealed class HostOldShortcuts : IAsyncDisposable
             : context.Request.Path.Value switch
             {
                 "/bootstrap/client.json" when PlatformBootstrap.IsHost(name) => PlatformBootstrap.Manifest(name, served.Port, served.Pin, served.Sha256, null,
-                    new MovedTo(_remotePort, _pin, _steps?.ServerName ?? HostInvite.DefaultName, PlatformBootstrap.PlayerFolderName)),
+                    new MovedTo(_remotePort, _pin, _steps?.ServerName ?? HostInvite.DefaultName, PlayerFolder)),
                 "/bootstrap/companion.zip" => Results.File(served.Archive, "application/zip", "companion.zip", enableRangeProcessing: true),
                 _ => Results.NotFound(),
             };

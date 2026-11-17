@@ -535,6 +535,8 @@ A zip with an older version than yours changes nothing. If you installed with `S
 newest code and double-click `START-HERE.cmd` again; it names your version and this download's and offers to update. If yours
 is a release, a build made there changes nothing. Your players' tool updates itself the next time they start the game.
 
+If you later move this server to patch 1.0.0.132, your players' old desktop icons offer to set up the new version, with the same username and password. Keep this Amberline installed, updated to 0.1.25 or later, and closed while the 1.0.0.132 one runs. The steps are in the [1.0.0.132 guide](132/HOSTING.md#moving-from-the-100126-line).
+
 ## Play on this PC
 
 **Play** opens the game client on this PC, connected to your own server. The button says **Starting…** at once; the client's
