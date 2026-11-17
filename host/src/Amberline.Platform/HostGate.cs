@@ -85,8 +85,9 @@ public sealed class HostSessions
 /// <see cref="PlatformManagement.IsLocal"/>. Every host route (<see cref="IsHostPath"/>) answers only:
 /// <list type="bullet">
 /// <item>a loopback connection to the page's port that names a loopback host (a rebound DNS name and the public port get 404);</item>
-/// <item>for anything but GET and HEAD, a request that is not from another site: <c>Origin</c> absent or the page's own, and
-/// <c>Sec-Fetch-Site</c> absent, <c>same-origin</c> or <c>none</c> (the forms keep their antiforgery token too);</item>
+/// <item>for anything but GET and HEAD, a request that is not from another site: <c>Origin</c> absent or the page's own (or
+/// <c>null</c> with <c>Sec-Fetch-Site: same-origin</c>, batch 858), and <c>Sec-Fetch-Site</c> absent, <c>same-origin</c> or <c>none</c>
+/// (the forms keep their antiforgery token too);</item>
 /// <item>a browser holding a session from <c>/open</c> (<see cref="HostSessions"/>).</item>
 /// </list>
 /// No CORS header is ever sent, so another site cannot read a host page either. Batch 656: the exceptions are the friends' port's
@@ -109,7 +110,11 @@ public static class HostGate
         var site = request.Headers["Sec-Fetch-Site"].ToString();
         if (site.Length != 0 && site is not ("same-origin" or "none")) return false;
         var origin = request.Headers.Origin.ToString();
-        return origin.Length == 0 || string.Equals(origin, "http://" + request.Host.Value, StringComparison.OrdinalIgnoreCase);
+        // Batch 858: a page served with Referrer-Policy: no-referrer (the 1.0.0.132 Platform's, every response) makes the browser send
+        // Origin: null on its own form posts (Fetch, "append a request Origin header"); Sec-Fetch-Site, which no page can set, then tells
+        // the page's own post (same-origin) from an opaque origin elsewhere (cross-site), and a browser without it stays refused.
+        return origin.Length == 0 || string.Equals(origin, "http://" + request.Host.Value, StringComparison.OrdinalIgnoreCase) ||
+               origin == "null" && site == "same-origin";
     }
 
     /// <summary>

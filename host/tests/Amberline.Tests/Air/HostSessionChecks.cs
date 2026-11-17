@@ -185,6 +185,8 @@ public static class HostSessionChecks
                          (null, "cross-site", "Sec-Fetch-Site cross-site"),
                          (null, "same-site", "Sec-Fetch-Site same-site (another port on this PC)"),
                          (own, "cross-site", "its own Origin with a cross-site fetch"),
+                         ("null", "cross-site", "an opaque origin, cross-site"),
+                         ("null", "same-site", "an opaque origin on another port of this PC"),
                      })
             {
                 using var refused = await browser.SendAsync(SetupPost(token, home, origin, site));
@@ -192,7 +194,9 @@ public static class HostSessionChecks
                 TestAssert.True((await refused.Content.ReadAsStringAsync()).Contains("It came from another website", StringComparison.Ordinal), why);
             }
             // The page itself, the browser's own navigation and a program without browser headers pass the gate and reach the form.
-            foreach (var (origin, site) in new (string?, string?)[] { (own, "same-origin"), (null, "none"), (null, null) })
+            // Batch 858: what Chromium 156 sent for the 1.0.0.132 Platform's own form posts (its pages say Referrer-Policy: no-referrer):
+            // Origin null, Sec-Fetch-Site same-origin.
+            foreach (var (origin, site) in new (string?, string?)[] { (own, "same-origin"), (null, "none"), (null, null), ("null", "same-origin") })
             {
                 using var passed = await browser.SendAsync(SetupPost(token, home, origin, site));
                 TestAssert.True(passed.StatusCode == HttpStatusCode.BadRequest &&
