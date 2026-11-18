@@ -28,6 +28,43 @@ public static class AirChampionSelectSpellChecks
     [Check("server.air-champion-select-dominion-pick-refuses-a-spell-its-level-locks")]
     public static void DominionPickRefusesALockedSpell() => DominionPickAsync().GetAwaiter().GetResult();
 
+    [Check("server.air-champion-select-lists-every-seat-with-its-spells-before-the-pick")]
+    public static void ListsEverySeatBeforeThePick() => BeforeThePickAsync().GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Batch 860: 1.52 fills the Spells box only from the player's own PlayerChampionSelectionDTO (ChampionSelectionController.findAssignedItems,
+    /// as:1694-1729), so every seat is listed from the start of champion selection, championId 0 until its pick; team selection lists none.
+    /// </summary>
+    private static async Task BeforeThePickAsync()
+    {
+        var root = TemporaryDirectory("league-air-champion-select-before-pick");
+        try
+        {
+            await using var rig = new AirPartyQueueChecks.Rig(root);
+            var host = rig.SignIn("spellbeforepickhost");
+            var economy = rig.SignIn("spellbeforepickeconomy", maxed: false);
+            SaveSpells(rig, host, "SummonerTeleport", "SummonerHeal");
+            CreateAndJoin(rig, host, economy, GameMaps.Normal, 10, GameMaps.ClassicMode);
+            TestAssert.True(Selection(rig, host) is null, "team selection lists no seat");
+            var created = (AsObject)rig.Games.Current(host.Id)!;
+            rig.Games.Start(host.Id, Convert.ToInt32(created["id"]), Convert.ToInt64(created["optimisticLock"]));
+            TestAssert.Equal((0, 12, 7), Selection(rig, host), "the host's saved Teleport and Heal, before a pick");
+            TestAssert.Equal((0, 7, 6), Selection(rig, economy), "a new summoner's Heal and Ghost, before a pick");
+            rig.Games.SelectSpells(host.Id, 4, 14);
+            TestAssert.Equal((0, 4, 14), Selection(rig, host), "a spell change before the pick is shown");
+            rig.Games.Pick(host.Id, 1);
+            TestAssert.Equal((1, 4, 14), Selection(rig, host), "the pick keeps the spells");
+        }
+        finally { DeleteDirectory(root); }
+    }
+
+    /// <summary>The account's own PlayerChampionSelectionDTO (championId, spell1Id, spell2Id), or null when the game DTO lists none.</summary>
+    private static (int, int, int)? Selection(AirPartyQueueChecks.Rig rig, PlatformAccount account) =>
+        ((ArrayCollection)((AsObject)rig.Games.Current(account.Id)!)["playerChampionSelections"]).Cast<AsObject>()
+            .Where(s => (string)s["summonerInternalName"] == AirGameDtos.InternalName(account))
+            .Select(s => ((int, int, int)?)(Convert.ToInt32(s["championId"]), Convert.ToInt32(s["spell1Id"]), Convert.ToInt32(s["spell2Id"])))
+            .SingleOrDefault();
+
     private static async Task LowLevelDominionSeatAsync()
     {
         var root = TemporaryDirectory("league-air-champion-select-low-odin");

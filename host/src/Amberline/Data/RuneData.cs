@@ -40,9 +40,10 @@ public sealed record RuneData(
 /// <summary>
 /// Immutable metadata catalog for the 374 real patch-126 rune records.
 /// Rune IDs are data records, not inventory items and are never accepted by
-/// the six-slot inventory path.
+/// the six-slot inventory path. Batch 861: a rune that carries one of the line's retired stats (<c>RetiredStats</c>, the seam
+/// <c>RuneData.Line.cs</c>: none on 1.0.0.126, dodge on 1.0.0.132) still resolves, but is no regular rune.
 /// </summary>
-public sealed class RuneCatalog
+public sealed partial class RuneCatalog
 {
     public const int FirstRuneId = 5001;
     public const int LastRuneId = 5374;
@@ -73,8 +74,8 @@ public sealed class RuneCatalog
     public RuneCatalog(IEnumerable<RuneData> definitions)
     {
         Paths = new GameDataPaths(AppContext.BaseDirectory);
-        _all = Array.AsReadOnly(definitions.OrderBy(rune => rune.Id).ToArray());
-        _runes = new ReadOnlyDictionary<int, RuneData>(_all.ToDictionary(rune => rune.Id));
+        _runes = new ReadOnlyDictionary<int, RuneData>(definitions.ToDictionary(rune => rune.Id));
+        _all = Array.AsReadOnly(_runes.Values.Where(rune => !Retired(rune)).OrderBy(rune => rune.Id).ToArray());
     }
 
     public RuneCatalog(GameDataPaths? paths = null)
@@ -106,7 +107,7 @@ public sealed class RuneCatalog
         if (runes.Count != LastRuneId - FirstRuneId + 1)
             throw new InvalidDataException($"Expected {LastRuneId - FirstRuneId + 1} rune records, got {runes.Count}.");
         _runes = new ReadOnlyDictionary<int, RuneData>(runes);
-        _all = Array.AsReadOnly(runes.Values.OrderBy(rune => rune.Id).ToArray());
+        _all = Array.AsReadOnly(runes.Values.Where(rune => !Retired(rune)).OrderBy(rune => rune.Id).ToArray());
     }
 
     private static RuneData ReadRune(ItemData item, IReadOnlyDictionary<string, string> translations)
@@ -131,8 +132,12 @@ public sealed class RuneCatalog
     }
 
     public GameDataPaths Paths { get; }
-    /// <summary>The 374 regular runes: what the store sells, the combiner merges and the complete inventory grants.</summary>
+    /// <summary>
+    /// The regular runes: what the store sells, the combiner merges and the complete inventory grants. The 374 shipped records less the
+    /// retired ones (<see cref="IsRetired"/>): 374 on 1.0.0.126, 350 on 1.0.0.132.
+    /// </summary>
     public IReadOnlyList<RuneData> All => _all;
+    /// <summary>The shipped regular records (5001-5374), retired ones included.</summary>
     public int Count => _runes.Count;
     /// <summary>Event and promotional runes that ship as rune records but are not granted by any shipped path.</summary>
     public IReadOnlyCollection<RuneData> Special => _special.Values.OrderBy(rune => rune.Id).ToArray();
@@ -141,9 +146,19 @@ public sealed class RuneCatalog
     /// A regular rune, one of the <see cref="All"/> records a normal player could buy in October 2011 (5001-5374). The event
     /// (8001-8034) and promotional (10001-10002) records, the 5000 placeholder and any id the shipped data lacks (5378) are
     /// not: the AIR rune catalog (RuneGeneratedData) lists all of them for the client's own hydration, but the store and
-    /// the account's inventory only ever offer the regular ones.
+    /// the account's inventory only ever offer the regular ones. A retired record (<see cref="IsRetired"/>) is not regular either.
     /// </summary>
-    public bool IsRegular(int id) => _runes.ContainsKey(id);
+    public bool IsRegular(int id) => _runes.TryGetValue(id, out var rune) && !Retired(rune);
+
+    /// <summary>
+    /// Batch 861: a rune record, regular or event, that carries a stat this line removed (<c>RetiredStats</c>): on 1.0.0.132 the 24 dodge
+    /// runes 5019 ... 5354 and the event ones 8004, 8010, 8018 and 8029. It still resolves (<see cref="Get"/>), so the game and the bots
+    /// read it, but it is no regular rune: no store, combiner, grant or page save offers it.
+    /// </summary>
+    public bool IsRetired(int id) => Get(id) is { } rune && Retired(rune);
+
+    private static bool Retired(RuneData rune) => rune.Modifiers.Any(modifier => RetiredStats.Contains(modifier.Name));
+
     public RuneData? Get(int id) =>
         _runes.TryGetValue(id, out var rune) ? rune : _special.TryGetValue(id, out var special) ? special : null;
 

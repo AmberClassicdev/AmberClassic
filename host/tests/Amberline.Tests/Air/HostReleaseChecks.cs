@@ -147,16 +147,19 @@ public static class HostReleaseChecks
     {
         File.WriteAllText(Path.Combine(extracted, "START-HERE.cmd"), "@echo the stand-in guide %*\r\n", Encoding.ASCII);
         File.Copy(Path.Combine(Environment.SystemDirectory, "where.exe"), Path.Combine(extracted, "app", "platform", "Amberline.Platform.exe"), overwrite: true);
-        var bare = Start(null);
+        var (bare, _) = Start(null);
         TestAssert.True(bare.Contains("the stand-in guide", StringComparison.Ordinal), "a start without options opens the guide: " + bare);
         foreach (var (option, guide, what) in new[] { ((string?)null, true, "the guide's own start"), (HostInstall.ConfirmedOption, false, "Update now's start") })
         {
-            var output = Start(option, guide);
+            var (output, exit) = Start(option, guide);
             TestAssert.False(output.Contains("the stand-in guide", StringComparison.Ordinal) || output.Contains("files are missing", StringComparison.Ordinal),
                 $"{what} runs the Platform: {output}");
+            // Batch 863: 9009 is cmd's "not recognized"; with NoDefaultCurrentDirectoryInExePath set the Platform's bare name was never found.
+            TestAssert.True(exit != 9009, $"{what} finds the Platform: {output}");
         }
 
-        string Start(string? option, bool guide = false)
+        // Batch 863: as on a hardened PC (and in some development shells), cmd never runs a program from the current folder.
+        (string Output, int Exit) Start(string? option, bool guide = false)
         {
             var start = new ProcessStartInfo("cmd.exe")
             {
@@ -170,6 +173,7 @@ public static class HostReleaseChecks
             if (option is not null) start.ArgumentList.Add(option);
             start.Environment.Remove("AMBERLINE_GUIDE");
             if (guide) start.Environment["AMBERLINE_GUIDE"] = "1";
+            start.Environment["NoDefaultCurrentDirectoryInExePath"] = "1";
             using var process = Process.Start(start) ?? throw new InvalidOperationException("cmd.exe did not start");
             process.StandardInput.Close();
             var stdout = process.StandardOutput.ReadToEndAsync();
@@ -179,7 +183,7 @@ public static class HostReleaseChecks
                 try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
                 throw new TimeoutException("Start Amberline.cmd timed out");
             }
-            return stdout.Result + stderr.Result;
+            return (stdout.Result + stderr.Result, process.ExitCode);
         }
     }
 

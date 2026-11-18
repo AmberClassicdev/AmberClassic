@@ -815,7 +815,7 @@ public static class CombatPackets
             // The stock reader copies this two-byte EventData count before
             // dispatching the event-index byte. One event occupies the row.
             writer.Write((ushort)1);
-            writer.Write((byte)11); // common event table: OnDamageGiven
+            writer.Write(DamageGivenEvent);
             writer.Write(record.AttackerNetId); // EventData.mSource
             writer.Write(record.VictimNetId);
             writer.Write(ProtocolEncoding.Float32(record.PhysicalDamage, nameof(record)));
@@ -900,6 +900,9 @@ public static class CombatPackets
 
     /// <summary>EventDetailsList id 2, <c>OnChampionDie</c>.</summary>
     public const byte ChampionDieEvent = 2;
+
+    /// <summary>EventDetailsList id 11, <c>OnDamageGiven</c> in 1.0.0.126: the event of every death recap record (batch 859 named it; 132: 14).</summary>
+    public const byte DamageGivenEvent = 11;
 
     /// <summary>
     /// Batch 690 (community report, "top right kill counter shows 0 vs 0"): the champion death event, 0xAB on the dying champion with

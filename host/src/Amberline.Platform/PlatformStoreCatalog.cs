@@ -408,12 +408,7 @@ public sealed partial class PlatformStoreCatalog
     {
         _runeContent[rune.Id] = rune;
         _runeQuantityLimits[rune.Id] = rune.Color == RuneColor.Black ? 3 : 9;
-        var ip = rune.Tier switch
-        {
-            RuneTier.One => 15,
-            RuneTier.Two => 30,
-            _ => 80,
-        };
+        var ip = TierIp(rune.Tier);
         // A windowed rune sells at the IP price its window lists (see RuneProducts), a regular rune at the price list's; a list entry
         // with a basis carries that basis (a Reconstruction: price inferred from its class) as its note.
         var windowed = _calendar.WindowRuneIp(rune.Id);
@@ -429,6 +424,9 @@ public sealed partial class PlatformStoreCatalog
             RegisterRuneArtwork(rune, catalog.All), minimumLevel: RunePage.MinimumLevel(rune.Tier),
             historicallyVerified: windowNote is not null, note: windowNote);
     }
+
+    /// <summary>NOT RETAIL: the IP price of a rune the price list does not price (every rune under the neutral list), by its tier.</summary>
+    internal static int TierIp(RuneTier tier) => tier switch { RuneTier.One => 15, RuneTier.Two => 30, _ => 80 };
 
     private PlatformStoreItem Price(string id, string kind, int contentId, int championId, string name,
         int? defaultIp, int? defaultRp, string? imagePath, int minimumLevel = 1,

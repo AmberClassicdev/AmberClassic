@@ -372,6 +372,25 @@ public static class Patch132ProtocolChecks
         foreach (var stage in Enumerable.Range(1, 3))
             TestAssert.Equal($"OnVictoryPointThreshold{stage}", Name((byte)(CombatPackets.VictoryPointThreshold1 + stage - 1)));
         TestAssert.Equal("OnVictoryPointThreshold4", Name(CombatPackets.QuestReceived), "the Dominion quest announcement");
+
+        // Batch 859: every death recap (0x24) record names OnDamageGiven. 126's 11 is OnChampionUnrealKill here, whose BaseParams reader
+        // takes 9 bytes, not ParamsDamage's 0x29: the client walked a recap of several records past its buffer.
+        var origin = Amberline.Simulation.Combat.DeathRecapOrigin.BasicAttack(0, Amberline.Simulation.Combat.DeathRecapSourceType.Minion);
+        var records = new[]
+        {
+            new Amberline.Simulation.Combat.DeathRecapRecord(1.0, A, B, 20.0, 0.0, 0.0, origin),
+            new Amberline.Simulation.Combat.DeathRecapRecord(2.0, A, B + 1, 20.0, 0.0, 0.0, origin),
+            new Amberline.Simulation.Combat.DeathRecapRecord(3.0, A, B, 20.0, 0.0, 0.0, origin),
+        };
+        var recap = CombatPackets.DeathRecap(new Amberline.Simulation.Combat.DeathRecapSnapshot(1, A, B, 15.0,
+            Amberline.Simulation.Combat.DeathRecapSourceType.Minion, records), records).Plaintext.ToArray();
+        var offset = 0x19;
+        foreach (var index in Enumerable.Range(0, records.Length))
+        {
+            TestAssert.Equal("OnDamageGiven", Name(recap[offset + 6]), $"death recap record {index}");
+            offset += 6 + 0x29;
+        }
+        TestAssert.Equal(recap.Length, offset, "the client's walk (six-byte prefix plus ParamsDamage's 0x29 bytes a record) ends at the packet's end");
     }
 
     private static uint Mask(PlaintextPacket packet, int offset) => Mask(packet.Plaintext.Span, offset);

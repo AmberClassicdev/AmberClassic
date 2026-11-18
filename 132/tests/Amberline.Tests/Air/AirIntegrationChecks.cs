@@ -318,8 +318,11 @@ public static class AirIntegrationChecks
         var inventory = (AsObject)reply.Body;
         TestAssert.Equal("com.riotgames.platform.summoner.runes.SummonerRuneInventory", inventory.TypeName);
         var runes = ((ArrayCollection)inventory["summonerRunes"]).Cast<AsObject>().ToArray();
-        TestAssert.Equal(374, runes.Length);
-        TestAssert.Equal(Enumerable.Range(5001, 374).ToArray(), runes.Select(r => (int)r["runeId"]).Order().ToArray());
+        // Batch 861: 1.0.0.132 removed the 24 dodge runes (Evasion and Elusion, every colour and tier), so a full account owns the other 350.
+        int[] dodge = [5019, 5020, 5049, 5050, 5079, 5080, 5109, 5110, 5141, 5142, 5171, 5172, 5201, 5202, 5231, 5232, 5263, 5264, 5293, 5294,
+            5323, 5324, 5353, 5354];
+        TestAssert.Equal(350, runes.Length);
+        TestAssert.Equal(Enumerable.Range(5001, 374).Except(dodge).ToArray(), runes.Select(r => (int)r["runeId"]).Order().ToArray());
         foreach (var rune in runes)
         {
             TestAssert.Equal("com.riotgames.platform.summoner.runes.SummonerRune", rune.TypeName);
@@ -346,17 +349,17 @@ public static class AirIntegrationChecks
         AsObject Effect(int id) => ((ArrayCollection)((AsObject)runes.Single(r => (int)r["runeId"] == id)["rune"]!)["itemEffects"])
             .Cast<AsObject>().First();
         int Listed(int category) => runes.Count(r => category == 0 || (int)Effect((int)r["runeId"])["effectCategory"] == category);
-        TestAssert.Equal(374, Listed(0));
+        TestAssert.Equal(350, Listed(0));
         for (var category = 1; category <= 6; category++)
-            TestAssert.True(Listed(category) is > 0 and < 374, $"category {category} lists only its own runes ({Listed(category)})");
-        TestAssert.Equal(374, Enumerable.Range(1, 6).Sum(Listed), "every rune is in exactly one category");
+            TestAssert.True(Listed(category) is > 0 and < 350, $"category {category} lists only its own runes ({Listed(category)})");
+        TestAssert.Equal(350, Enumerable.Range(1, 6).Sum(Listed), "every rune is in exactly one category");
         // Stock catalog values (AirGeneratedContent RuneGeneratedData): stat name, primary rune type, image.
         foreach (var (id, name, category, type, image) in new[]
                  {
                      (5001, "FlatPhysicalDamageMod", 3, 1, "r_1_1.png"), (5255, "FlatHPPoolMod", 1, 3, "r_3_3.png"),
                      // Batch 799: 1.52's catalogue files the mana pool under Health (categoryId 1) and energy under Mana (2).
                      (5299, "FlatMPPoolMod", 1, 5, "b_1_3.png"), (5297, "FlatMagicDamageMod", 4, 5, "b_3_3.png"),
-                     (5303, "rFlatMagicPenetrationMod", 4, 1, "b_1_3.png"), (5264, "rFlatDodgeModPerLevel", 5, 3, ""),
+                     (5303, "rFlatMagicPenetrationMod", 4, 1, "b_1_3.png"), (5261, "FlatHPRegenMod", 1, 3, "r_1_3.png"),
                      (5266, "rPercentCooldownModPerLevel", 6, 5, "r_2_3.png"), (5369, "FlatEnergyRegenMod", 2, 3, "y_1_3.png"),
                  })
         {

@@ -152,6 +152,8 @@ public static class Program
         // ChampionCatalog reads its rows from this AIR client (AirChampionData.ResolveSwf).
         Environment.SetEnvironmentVariable("AIR_CLIENT_ROOT", airRoot);
         using var accounts = new PlatformAccounts(home, airRoot);
+        // Batch 861: 1.0.0.132 removed the dodge runes and refunded them (PlatformAccounts.RetireRunes; once, a later start finds nothing).
+        accounts.RetireRunes(Console.Out);
         // NOT RETAIL (batch 751): retail had no host switch for skins, RP or champions; the store's live controls start from platform.json (a file without the fields: all on).
         accounts.Controls = PlatformControls.From(settings);
         await using var manager = new GameManager(hostSettings, Path.Combine(home, "games"));

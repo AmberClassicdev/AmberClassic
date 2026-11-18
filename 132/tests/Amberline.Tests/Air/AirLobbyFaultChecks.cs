@@ -76,7 +76,8 @@ public static class AirLobbyFaultChecks
             // A teammate already holds Annie: the answer is the unchanged game, not a fault.
             games.Pick(a.Id, 1);
             var answer = (AsObject)games.Pick(c.Id, 1);
-            var selections = ((ArrayCollection)answer["playerChampionSelections"]).Cast<AsObject>().ToArray();
+            // Batch 860: every seat is listed during selection; a seat without a pick has championId 0.
+            var selections = ((ArrayCollection)answer["playerChampionSelections"]).Cast<AsObject>().Where(s => !Equals(s["championId"], 0)).ToArray();
             TestAssert.Equal(1, selections.Length, "only the first pick is in the game");
             TestAssert.Equal(1, selections[0]["championId"]);
             games.Pick(b.Id, 1);

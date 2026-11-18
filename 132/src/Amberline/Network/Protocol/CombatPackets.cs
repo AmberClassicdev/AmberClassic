@@ -798,9 +798,9 @@ public static class CombatPackets
     }
 
     /// <summary>
-    /// Patch-126 NpcDieEventHistory. The fixed header is 0x11 bytes long;
-    /// each ParamsDamage history record is the six-byte event prefix plus its
-    /// 0x29-byte event-11 serializer payload, for 0x2f bytes per record.
+    /// NpcDieEventHistory. The fixed header is 0x11 bytes long; each ParamsDamage history record is the six-byte event prefix plus
+    /// the 0x29 bytes its event's serializer reads, for 0x2f bytes per record. Batch 859: the event is <see cref="DamageGivenEvent"/>;
+    /// the 132 reader (DeathRecap) copies the records and walks them by the size each event's serializer returns.
     /// </summary>
     public static PlaintextPacket DeathRecap(
         DeathRecapSnapshot snapshot,
@@ -842,7 +842,7 @@ public static class CombatPackets
             // The stock reader copies this two-byte EventData count before
             // dispatching the event-index byte. One event occupies the row.
             writer.Write((ushort)1);
-            writer.Write((byte)11); // common event table: OnDamageGiven
+            writer.Write(DamageGivenEvent);
             writer.Write(record.AttackerNetId); // EventData.mSource
             writer.Write(record.VictimNetId);
             writer.Write(ProtocolEncoding.Float32(record.PhysicalDamage, nameof(record)));
@@ -937,6 +937,20 @@ public static class CombatPackets
 
     /// <summary>EventDetailsList id 2, <c>OnChampionDie</c>.</summary>
     public const byte ChampionDieEvent = 2;
+
+    /// <summary>
+    /// Batch 859 (owner, 17 November 2026: "Getting executed by minions or jungle camps... causes a bugsplat"): EventDetailsList id 14,
+    /// <c>OnDamageGiven</c>, the event of every death recap record. The server wrote 126's id 11, which batch 780's insertions (3, 5, 6)
+    /// made <c>OnChampionUnrealKill</c> in 132 (initializer: "OnChampionUnrealKill" with EventFunctions&lt;BaseParams&gt;
+    /// "OnDamageGiven" with EventFunctions&lt;ParamsDamage&gt;). BaseParams' reader takes 9 bytes where ParamsDamage's
+    /// takes 0x29, so the client walked each later record from inside the one before: a lone record showed "amount 0", and
+    /// what several did depends on their bytes. A six-record minion recap ran past the copied buffer (the checked index:
+    /// _invalid_parameter_noinfo, the process ends with 0xC000000D and no BugSplat; twice on a throwaway client); replaying the walk
+    /// over a headless seven-record minion recap reaches event id 194, past the 110-entry table (an access violation, which BugSplat
+    /// reports; inferred); two-record camp recaps replay to the end with garbage rows. Executions by a wave or a camp send several
+    /// records, one champion hit or one turret shot from low health one. 126 keeps 11, its own OnDamageGiven.
+    /// </summary>
+    public const byte DamageGivenEvent = 14;
 
     /// <summary>
     /// Batch 690 (community report, "top right kill counter shows 0 vs 0"): the champion death event, 0xAB on the dying champion with

@@ -12,7 +12,8 @@ public static class RuneChecks
     {
         var catalog = new RuneCatalog();
         TestAssert.Equal(374, catalog.Count);
-        TestAssert.Equal(374, catalog.All.Count);
+        // Batch 861: the regular runes are the shipped records less the line's retired ones (DodgeRuneChecks pins those per line).
+        TestAssert.Equal(Enumerable.Range(5001, 374).Where(id => !catalog.IsRetired(id)).ToArray(), catalog.All.Select(rune => rune.Id).ToArray());
         TestAssert.False(catalog.Contains(RuneCatalog.PlaceholderRuneId));
 
         var lesserMark = catalog.Get(5001)!;

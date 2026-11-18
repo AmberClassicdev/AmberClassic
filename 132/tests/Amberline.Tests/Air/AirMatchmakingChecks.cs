@@ -75,7 +75,7 @@ public static class AirMatchmakingChecks
         games.Pick(players[0].Id, 1);
         var duplicate = (AsObject)games.Pick(players[1].Id, 1);
         TestAssert.False(((ArrayCollection)duplicate["playerChampionSelections"]).Cast<AsObject>()
-                .Any(selection => Equals(selection["summonerInternalName"], "sum" + players[1].SummonerId)),
+                .Any(selection => Equals(selection["summonerInternalName"], "sum" + players[1].SummonerId) && !Equals(selection["championId"], 0)),
             "a team cannot pick a duplicate champion: the unchanged game comes back");
         games.Quit(players[0].Id);
         TestAssert.True(games.Current(players[1].Id) is null, "normal champion-select quit terminates the matched room");

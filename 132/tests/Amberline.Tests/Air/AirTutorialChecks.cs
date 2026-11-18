@@ -124,10 +124,14 @@ public static class AirTutorialChecks
             TestAssert.Equal(5, two.Length);
             TestAssert.Equal((double)account.Id, one[0]["accountId"], "the player leads team one");
             TestAssert.True(one.Skip(1).Concat(two).All(p => p.TypeName == BotAlias), "the other nine seats are bots");
-            var bots = ((ArrayCollection)game["playerChampionSelections"]).Cast<AsObject>()
+            // Batch 860: the player's own row is listed before the pick (championId 0, its spells), as 1.52 reads its spells from there.
+            var rows = ((ArrayCollection)game["playerChampionSelections"]).Cast<AsObject>().ToArray();
+            var bots = rows.Where(s => ((string)s["summonerInternalName"]).StartsWith("bot_", StringComparison.Ordinal))
                 .Select(s => (string)s["summonerInternalName"]).OrderBy(name => name, StringComparer.Ordinal).ToArray();
             TestAssert.Equal(new[] { "bot_Annie_200", "bot_Malphite_200", "bot_MasterYi_100", "bot_MasterYi_200", "bot_Nasus_200",
                 "bot_Shen_100", "bot_Sivir_100", "bot_Sivir_200", "bot_Soraka_100" }, bots, "the player picks; the bots hold their champions");
+            TestAssert.Equal(0, rows.Single(s => (string)s["summonerInternalName"] == AirGameDtos.InternalName(account))["championId"],
+                "the player's row has no champion before the pick");
 
             // The guided grid lists only the tutorial's three (AdvancedTutorialController.tutorialChampions), owned or not.
             TestAssert.Throws<ArgumentException>(() => rpc.Route("rpc", "gameService", "selectChampion", [(double)Id("Annie")]));

@@ -307,7 +307,13 @@ public sealed class HeroAttackOrderSystem
         hero.HeroPursuit = pursuit is HeroPursuitState last &&
             hero.AttackTarget is null && destination == last.LastKnownPosition && path.Count > 1
                 ? last with { LastKnownPosition = path[^1] } : pursuit;
-        if (effects.IsReferenceReady(hero))
+        // Reconstruction (batch 862, "Fizz Q sometimes skips its dash and teleports"): a forced move owns the hero's client route until it ends, as a
+        // player's order during a dash is refused (ProductionGameplayDispatcher) and a control stop waits for it (BuffLifecycle). CommitMoveOrder
+        // refuses the walk and answers the hero's own spot, and publishing that one-point path after the dash (0x68; 126: 0x67) stopped it on every client
+        // (the install seats the actor on the point; 132 inferred), so the landing's stop
+        // later snapped the hero across. FizzPiercingStrike's TargetExecute orders AI_ATTACKTO on a champion right after its BBMove; out of
+        // attack reach the order closes on the target through here. The order itself stands: the scan closes on the target after the landing.
+        if (hero.ForcedMove is null && effects.IsReferenceReady(hero))
         {
             // No route is a stop, whose one-point path is installed on receipt: seated at once.
             var route = path.Count > 0 ? path : movement.InstallStop(hero);

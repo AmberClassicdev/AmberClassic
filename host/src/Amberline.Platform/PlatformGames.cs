@@ -135,8 +135,8 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
         public int Skin;
         /// <summary>When the player took this seat; only feeds the host page's Online table.</summary>
         public DateTimeOffset Joined;
-        public int Spell1 = AirGameDtos.SpellId(account.Loadout.SummonerSpell1);
-        public int Spell2 = AirGameDtos.SpellId(account.Loadout.SummonerSpell2);
+        public int Spell1 = AirGameDtos.SavedSpellId(account.Loadout.SummonerSpell1);
+        public int Spell2 = AirGameDtos.SavedSpellId(account.Loadout.SummonerSpell2);
         public bool Locked;
         /// <summary>The client's CHAMP_SELECT_CLIENT acknowledgement that its champion grid loaded (<see cref="AcknowledgeChampionSelect"/>).</summary>
         public bool GridLoaded;
@@ -1145,17 +1145,17 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
     /// Flash and Dot, which unlock at 12 and 7. The default is the platform pair where the summoner may use it, else the economy pair
     /// (Heal, Haste: unlocked at every level, offered on every map). Reconstruction: retail's fallback is not recovered from the shipped files.
     /// </para>
+    /// <para>
+    /// Batch 860 (owner report, 17 November 2026: a player had two blank spells and then could not enter the game): the same spell twice, or a
+    /// saved name this line does not know (<see cref="AirGameDtos.SavedSpellId"/>), gets the same default; <see cref="Launch"/> applies this gate
+    /// again, so a game never starts with a pair the game server refuses (MatchRoster.Validate aborts the whole match on a repeated spell).
+    /// </para>
     /// </summary>
     private static Member OfferedSeat(Member member, int mapId)
     {
         var level = member.Account.Loadout.SummonerLevel;
-        if (!AirGameDtos.SpellUsable(member.Spell1, mapId, level) || !AirGameDtos.SpellUsable(member.Spell2, mapId, level))
-        {
-            var flash = AirGameDtos.SpellId(SummonerLoadout.DefaultFirst);
-            var dot = AirGameDtos.SpellId(SummonerLoadout.DefaultSecond);
-            (member.Spell1, member.Spell2) = AirGameDtos.SpellUsable(flash, mapId, level) && AirGameDtos.SpellUsable(dot, mapId, level)
-                ? (flash, dot) : (AirGameDtos.SpellId("SummonerHeal"), AirGameDtos.SpellId("SummonerHaste"));
-        }
+        if (!AirGameDtos.PairUsable(member.Spell1, member.Spell2, mapId, level))
+            (member.Spell1, member.Spell2) = AirGameDtos.DefaultSpells(mapId, level);
         return member;
     }
 
@@ -1767,7 +1767,9 @@ public sealed partial class PlatformGames(PlatformAccounts accounts, GameManager
                 (member.Skin != 0 && !PlatformEconomy.OwnsSkin(account, member.Champion * 1000 + member.Skin)))
                 throw new ArgumentException("A selected champion or skin is no longer available.");
         }
-        // The spells this game's map offers (Garrison on The Crystal Scar, batch 455): the pick was checked against the same list.
+        // The spells this game's map offers (Garrison on The Crystal Scar, batch 455): the pick was checked against the same list. Batch 860:
+        // every seat passes the seat gate once more, so no pair reaches the roster that the map, the level or the game server refuses.
+        foreach (var member in game.Members) OfferedSeat(member, game.MapId);
         var offered = AirGameDtos.SpellNamesFor(game.MapId);
         var humans = game.Members.Select(m => accounts.Get(m.Account.Id).Loadout with
         {

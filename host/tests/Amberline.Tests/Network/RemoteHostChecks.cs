@@ -254,7 +254,8 @@ public static class RemoteHostChecks
         // Batch 825: the invitation assertions (HostFiles.Invite and Authenticate) went with the Host executable's HTTPS API.
         var runes = new RuneCatalog(GameData.Default.Paths);
         var copied = new RuneCatalog(runes.All);
-        TestAssert.Equal(runes.Count, copied.Count);
+        // Batch 861: All leaves the line's retired runes out (1.0.0.132's dodge runes), so the copy holds the regular ones.
+        TestAssert.Equal(runes.All.Count, copied.Count);
         var masteries = new MasteryCatalog(GameData.Default.Paths);
         TestAssert.Equal(masteries.Definitions.Count, new MasteryCatalog(masteries.Definitions).Definitions.Count);
         var old = Environment.GetEnvironmentVariable("AMBERLINE_MATCH_KEY");

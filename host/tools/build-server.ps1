@@ -412,7 +412,9 @@ function Write-HomeFile([string]$Name, [string]$Text) {
 if ($Layout -eq 'Home') {
     # The files at the zip's root. Start Amberline.cmd runs the Platform with --home from its own folder (the Platform's derived
     # server and bootstrap folders are beside that folder). Batch 682: without options it opens the guide (START-HERE.cmd), unless
-    # the guide started it (AMBERLINE_GUIDE), so a double-click on it asks the guide's questions too.
+    # the guide started it (AMBERLINE_GUIDE), so a double-click on it asks the guide's questions too. Batch 863: the Platform by its
+    # full path, because with NoDefaultCurrentDirectoryInExePath set (a hardened PC or some development shells) cmd never runs a program
+    # from the current folder: the bare name was "not recognized", and Update now's window closed without updating.
     $homeStart = @'
 @echo off
 rem Installs Amberline in the folder you choose (C:\{HOME} unless you choose another), or updates it, then starts it.
@@ -422,7 +424,7 @@ title Amberline
 if not exist "%~dp0app\platform\{PLATFORM}" goto missing
 if "%~1"=="" if not defined AMBERLINE_GUIDE if exist "%~dp0START-HERE.cmd" goto guide
 cd /d "%~dp0app\platform"
-"{PLATFORM}" --home %*
+"%~dp0app\platform\{PLATFORM}" --home %*
 exit /b %errorlevel%
 :guide
 call "%~dp0START-HERE.cmd"

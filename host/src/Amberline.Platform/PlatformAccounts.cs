@@ -1059,6 +1059,7 @@ public sealed partial class PlatformAccounts : IDisposable
     /// </summary>
     private PlatformAccount? Completed(PlatformAccount? account)
     {
+        account = WithSeatableSpells(account);
         if (account is null || (account.Economy is not null && !account.Economy.AllUnlocked)) return account;
         var existing = RunePagesFor(account);
         var missing = EconomyRules.MaximumRunePages - existing.Length;
@@ -1068,6 +1069,30 @@ public sealed partial class PlatformAccounts : IDisposable
         var completed = account with { RunePages = existing.Concat(added).OrderBy(page => page.PageId).ToArray() };
         Save(_state with { Accounts = _state.Accounts.Select(a => a.Id == account.Id ? completed : a).ToArray() });
         return completed;
+    }
+
+    /// <summary>
+    /// Batch 860 (Reconstruction: retail's repair of a saved pair is not recovered): a saved default pair that no map seats at the summoner's
+    /// level (a name this line does not know, the same spell twice, a spell above the level or out of the pool) becomes the default pair
+    /// (<see cref="AirGameDtos.DefaultSpells"/> on Summoner's Rift) the first time it is read, and the store keeps it. Such a pair also failed
+    /// every later loadout, rune page and mastery save (<see cref="ValidateSpellUnlocks"/>). A pair one map seats stays (batch 500: a seat on a
+    /// map that refuses it gets the default for that game only). Batch 865: it never stops a read: an account without a loadout (a store
+    /// written by hand or by another build) stays as it is, and a refused write returns the repair unsaved (the next read tries again).
+    /// </summary>
+    private PlatformAccount? WithSeatableSpells(PlatformAccount? account)
+    {
+        if (account?.Loadout is not { } loadout) return account;
+        var level = loadout.SummonerLevel;
+        var (first, second) = (AirGameDtos.SavedSpellId(loadout.SummonerSpell1), AirGameDtos.SavedSpellId(loadout.SummonerSpell2));
+        if (new[] { GameMaps.Normal, GameMaps.CrystalScar }.Any(map => AirGameDtos.PairUsable(first, second, map, level))) return account;
+        (first, second) = AirGameDtos.DefaultSpells(GameMaps.Normal, level);
+        var (name1, name2) = (AirGameDtos.AllSpellNames[first], AirGameDtos.AllSpellNames[second]);
+        // A level no pair suits (0, by hand) leaves even the default unusable: it is saved once, not at every read.
+        if (loadout.SummonerSpell1 == name1 && loadout.SummonerSpell2 == name2) return account;
+        var repaired = account with { Loadout = loadout with { SummonerSpell1 = name1, SummonerSpell2 = name2 } };
+        try { Save(_state with { Accounts = _state.Accounts.Select(a => a.Id == account.Id ? repaired : a).ToArray() }); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return repaired;
     }
 
     /// <summary>Batch 706: empty pages on the given ids, named Page N (with a suffix where the book already uses the name).</summary>

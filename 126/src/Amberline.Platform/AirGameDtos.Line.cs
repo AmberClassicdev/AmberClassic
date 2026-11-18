@@ -30,6 +30,12 @@ public static partial class AirGameDtos
         ? AllSpellNames.Where(pair => OdinSpellIds.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value)
         : SpellNames;
 
+    /// <summary>
+    /// Batch 860: the 1.52 line lists every seat in <c>playerChampionSelections</c> during selection, because 1.52 reads a seat's spells only
+    /// from there. 1.45's client code is not on disk (batch 727's open question), so this line keeps listing a seat after its pick only.
+    /// </summary>
+    private static bool SelectionBeforePick(string state) => false;
+
     /// <summary>The GameDTO's bans: 1.45's <c>bannedChampionIds</c>, the champion ids in ban order.</summary>
     private static (string Name, object? Value) Bans(PlatformGames.Lobby g) =>
         ("bannedChampionIds", List(g.BannedChampions.Select(ban => (object)ban.Champion)));

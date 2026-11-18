@@ -7,7 +7,7 @@ namespace Amberline.Tests.Network;
 public static class DeathRecapChecks
 {
     [Check("death-recap.packet-layout")]
-    public static void PacketLayoutUsesPatch126Event11Record()
+    public static void PacketLayoutUsesTheDamageGivenRecord()
     {
         var origin = DeathRecapOrigin.BasicAttack(0, DeathRecapSourceType.Hero);
         var record = new DeathRecapRecord(7.5, 2, 1, 42.0, 0.0, 0.0, origin);
@@ -27,7 +27,8 @@ public static class DeathRecapChecks
         TestAssert.Equal(1, BinaryPrimitives.ReadInt32LittleEndian(bytes[0x15..]));
 
         const int row = 0x19;
-        TestAssert.Equal((byte)11, bytes[row + 6]);
+        // Batch 859: the line's OnDamageGiven (126: 11, 132: 14; protocol.132-world-event-ids names the 132 one).
+        TestAssert.Equal(CombatPackets.DamageGivenEvent, bytes[row + 6]);
         TestAssert.Equal(1u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[(row + 7)..]));
         TestAssert.Equal(2u, BinaryPrimitives.ReadUInt32LittleEndian(bytes[(row + 11)..]));
         TestAssert.Near(42.0, BitConverter.ToSingle(bytes[(row + 15)..]), 1e-6);

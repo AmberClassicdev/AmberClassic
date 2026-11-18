@@ -75,6 +75,19 @@ public static partial class AirGameDtos
     }
 
     /// <summary>
+    /// Batch 860 (owner report, 17 November 2026: a player saw two blank summoner spells): 1.52 shows the player's own spells only from the
+    /// player's <c>PlayerChampionSelectionDTO</c> (ChampionSelectionController.findAssignedItems, as:1694-1729; GameDTO.getSpells, the
+    /// <c>accountSpellsMap</c> reader, has no caller). Listed only after a champion pick, a seat's Spells box stayed empty and dimmed until then
+    /// (SpellSelectionView.as:250-264, 329), and closing the spell dialog after one pick threw on the empty slot after setting
+    /// <c>spellsBusy</c> (confirmSpellsInternal, as:1366-1381; SpellSelectDialog.closeButtonClicked, as:563-567), so the box stayed shut for
+    /// that selection (openSpellSelectionDialog, as:1402). So every seat is listed through champion selection, championId 0 until its pick.
+    /// Reconstruction: no retail GameDTO is on disk. 1.52 reads championId 0 as no pick: no champion has id 0 (Random is -1, Inventory.as:595),
+    /// and the rows, the champion grid and trades all need a champion (ChampionSelectPlayer.as:745-760, MasterGameController.as:452-458,
+    /// ChampionTradeController.allowedToTrade and canInitiateTradeWithPlayer).
+    /// </summary>
+    private static bool SelectionBeforePick(string state) => state is "PRE_CHAMP_SELECT" or "CHAMP_SELECT" or "POST_CHAMP_SELECT";
+
+    /// <summary>
     /// The GameDTO's bans. 1.52 reads <c>bannedChampions</c>, a list of <c>BannedChampion</c> (championId, teamId, pickTurn, all int;
     /// BannedChampion.as), where 1.45 read <c>bannedChampionIds</c> (GameDTO.as). Champion select marks each championId banned
     /// (ChampionSelectionController.updateBannedChampionStates, as:1126-1148) and announces the new ones (printNewConfirmedBans,

@@ -46,6 +46,24 @@ public static partial class AirGameDtos
     /// </summary>
     public static bool SpellUsable(int spellId, int mapId, int summonerLevel) =>
         SpellNamesFor(mapId).TryGetValue(spellId, out var name) && AirDtos.SpellMinimumLevel(name) <= summonerLevel;
+    /// <summary>Batch 860: a pair a seat may hold: two different spells, each <see cref="SpellUsable"/> (the game server refuses a repeated spell).</summary>
+    public static bool PairUsable(int first, int second, int mapId, int summonerLevel) =>
+        first != second && SpellUsable(first, mapId, summonerLevel) && SpellUsable(second, mapId, summonerLevel);
+    /// <summary>
+    /// Batch 727's fallback pair, shared by batch 860: Flash and Ignite where the summoner may use both on the map, else Heal and Ghost
+    /// (level one, on every list). Reconstruction: retail's fallback is not recovered from the shipped files.
+    /// </summary>
+    public static (int First, int Second) DefaultSpells(int mapId, int summonerLevel)
+    {
+        var (flash, dot) = (SpellId(SummonerLoadout.DefaultFirst), SpellId(SummonerLoadout.DefaultSecond));
+        return PairUsable(flash, dot, mapId, summonerLevel) ? (flash, dot) : (SpellId("SummonerHeal"), SpellId("SummonerHaste"));
+    }
+    /// <summary>
+    /// Batch 860: a saved spell name's id, or 0 (an id no map offers) for a name this line's catalogue does not know, so a seat falls back to
+    /// <see cref="DefaultSpells"/> instead of the join failing (<see cref="SpellId"/> throws on such a name).
+    /// </summary>
+    public static int SavedSpellId(string? name) =>
+        AllSpellNames.FirstOrDefault(pair => pair.Value.Equals(name, StringComparison.OrdinalIgnoreCase)).Key;
     // AirGeneratedContent.swf: ChampionGeneratedData (ChampionCatalog.SkinCount). The catalogs are
     // contiguous, with global skinId = championId * 1000 + native skinIndex.
     // NOT RETAIL (batch 751): <paramref name="skinsOff"/> is the host's "Offer skins and RP" switch turned off (PlatformControls.PaidContentOff);
@@ -167,7 +185,8 @@ public static partial class AirGameDtos
                 .Concat(g.Bots.Where(b => b.Team == Team.Chaos).Select(b => BotParticipant(g, b, state))))),
             // Bots keep their lobby champion: the stock champion list marks a champion taken
             // for a team when a participant's selection names it, so humans cannot re-pick it.
-            ("playerChampionSelections", List(g.Members.Where(m => m.Champion != 0).Select(m => Object(AirProtocolNames.PlayerChampionSelectionDTO,
+            // Batch 860: on a line whose client reads a seat's spells only from here (SelectionBeforePick), every seat during selection.
+            ("playerChampionSelections", List(g.Members.Where(m => m.Champion != 0 || SelectionBeforePick(state)).Select(m => Object(AirProtocolNames.PlayerChampionSelectionDTO,
                 ("summonerInternalName", InternalName(m.Account)), ("championId", m.Champion), ("selectedSkinIndex", m.Skin),
                 ("spell1Id", (double)m.Spell1), ("spell2Id", (double)m.Spell2)))
                 .Concat(g.Bots.Select(b => Object(AirProtocolNames.PlayerChampionSelectionDTO,

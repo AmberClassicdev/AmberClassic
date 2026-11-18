@@ -48,9 +48,10 @@ public static class AirRuneTierChecks
             accounts.GrantCurrency(fresh.Id, 100_000, 100_000, Guid.NewGuid());
             var catalog = accounts.StoreCatalog;
 
-            // The Razer runes (10001-10002), the 34 event runes (8001-8034), the 5000 placeholder and 5378 are no products.
-            TestAssert.Equal(374, catalog.Items.Count(item => item.Kind == "RUNE"));
-            TestAssert.True(catalog.Items.Where(item => item.Kind == "RUNE").All(item => item.ContentId is >= 5001 and <= 5374));
+            // The Razer runes (10001-10002), the 34 event runes (8001-8034), the 5000 placeholder and 5378 are no products: exactly the
+            // regular runes are (374 on 1.0.0.126; batch 861: 1.0.0.132 retired its 24 dodge runes, DodgeRuneChecks).
+            var regular = Catalog.Value.All.Select(rune => rune.Id).ToArray();
+            TestAssert.Equal(regular, catalog.Items.Where(item => item.Kind == "RUNE").Select(item => item.ContentId).Order().ToArray());
             foreach (var hidden in new[] { 8001, 8034, 10001, 10002, 5000, 5378, 8013, 8018 })
             {
                 TestAssert.False(catalog.TryGet("rune:" + hidden, out _), $"rune {hidden} is not a store product");
@@ -64,8 +65,7 @@ public static class AirRuneTierChecks
             var maxed = accounts.RegisterPublic("hiddenmaxed", "testing-password", "Hidden Maxed");
             var inventory = AirDtos.RuneInventory(maxed);
             var ids = ((ArrayCollection)inventory["summonerRunes"]).Cast<AsObject>().Select(rune => Convert.ToInt32(rune["runeId"])).ToArray();
-            TestAssert.Equal(374, ids.Length);
-            TestAssert.True(ids.All(id => id is >= 5001 and <= 5374));
+            TestAssert.Equal(regular, ids.Order().ToArray());
 
             // Not even an account that owns everything can equip one: the ownership shortcut never reaches hidden records.
             var pages = accounts.GetRunePages(maxed.Id);
