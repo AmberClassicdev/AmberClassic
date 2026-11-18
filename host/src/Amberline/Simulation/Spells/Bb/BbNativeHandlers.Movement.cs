@@ -107,18 +107,8 @@ internal sealed partial class BbNativeHandlers
         var ideal = Sum(call, "IdealDistance");
         var requested = distance <= 1e-9 ? origin : new Position2(origin.X + dx / distance * travel, origin.Z + dz / distance * travel);
         var (type, postpone, face) = MoveOptions(call);
-        var started = _host.Moves.Start(unit, requested, IdealSpeed(Sum(call, "Speed"), travel, ideal), Sum(call, "Gravity"), type, postpone, face,
+        _host.Moves.Start(unit, requested, IdealSpeed(Sum(call, "Speed"), travel, ideal), Sum(call, "Gravity"), type, postpone, face,
             fitBody: !(ideal > 0.0 && targetValue is not Entity));
-        // Amber Classic probe "fizz-e-run=1": during FizzJump's dash Fizz's run animation is replaced by his jump clip (Spell3a), so a client that
-        // drives the dash with the run clip shows the jump; BbScriptMoves.Finish puts the script's own overrides back when the dash ends.
-        if (started is not null && unit.UnitType == UnitType.Hero && unit.ChampionName == "Fizz" && _host.HasFrame &&
-            _host.Frame.ScriptName == "FizzJump" && AmberDebug.On("fizz-e-run") && _host.Spells.Effects.IsReferenceReady(unit))
-        {
-            var clip = AmberDebug.Text("fizz-e-run-clip") ?? "Spell3a";
-            _host.Spells.Effects.SetAnimationStates(unit, unit.ScriptAnimationOverrides.Where(pair => pair.Key != "run")
-                .Select(pair => (pair.Key, pair.Value)).Append(("run", clip)).ToArray());
-            AmberDebug.RunOverridden.Add(unit.NetId);
-        }
     }
 
     /// <summary>
