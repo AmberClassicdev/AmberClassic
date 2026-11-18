@@ -543,4 +543,130 @@ public static class BbPatch132Checks
         // Batch 772: Ahri's Fox-Fire children (AhriFoxFireMissile, CastType 4) run as circle missiles (BbCircleMissile), so no exception is left.
         TestAssert.Equal(Array.Empty<string>(), failures.ToArray(), string.Join(Environment.NewLine, failures));
     }
+
+    /// <summary>
+    /// Batch 870 (the screenshot sweep: Chum the Waters at a minion showed no fish and no shark): a fish that catches no champion lands where it
+    /// ends (<c>FizzMarinerDoomMissile</c>'s <c>SpellOnMissileEnd</c> puts the ground fish, the buff of that name, on Fizz when
+    /// <c>InstanceVars.UltFired</c> is the <c>CharVars.UltFired</c> that <c>FizzMarinerDoom</c> set) and the shark rises there when it expires
+    /// (1.5 s, its <c>OnBuffDeactivate</c> spawns the <c>FizzShark</c> unit). A fish that catches a champion lands no second fish: its
+    /// <c>TargetExecute</c> clears <c>CharVars.UltFired</c> before the missile's end runs.
+    /// </summary>
+    [Check("scripting.p132-fizz-chum-lands-without-a-champion")]
+    public static void FizzChumLandsWithoutAChampion()
+    {
+        static bool Shark(Match match) => match.Runtime.World.Entities.Values.Any(unit => unit.ChampionName == "FizzShark");
+
+        using (var miss = new Match("Fizz"))
+        {
+            miss.Hero.Level = 6;
+            miss.Learn(1);
+            miss.Refill();
+            miss.Foe.Position = new Position2(7000, 9500);
+            TestAssert.True(miss.Cast(3, at: new Position2(7500, 7000)), "Chum the Waters casts at a ground point no champion stands on");
+            var landed = false;
+            for (var step = 0; step < 40 && !landed; step++)
+            {
+                miss.Advance(0.05);
+                landed = Buff(miss.Hero, "FizzMarinerDoomMissile") is not null;
+            }
+            TestAssert.True(landed, "the fish lands on the ground (FizzMarinerDoomMissile on Fizz): " + Names(miss.Hero));
+            miss.Advance(2.0);
+            TestAssert.True(Shark(miss), "the shark rises where the fish landed");
+        }
+
+        using var hit = new Match("Fizz");
+        hit.Hero.Level = 6;
+        hit.Learn(1);
+        hit.Refill();
+        TestAssert.True(hit.Cast(3, at: hit.Foe.Position), "Chum the Waters casts at the enemy champion");
+        var ground = false;
+        var caught = false;
+        for (var step = 0; step < 40; step++)
+        {
+            hit.Advance(0.05);
+            ground |= Buff(hit.Hero, "FizzMarinerDoomMissile") is not null;
+            caught |= Buff(hit.Foe, "FizzMarinerDoomBomb") is not null;
+        }
+        TestAssert.True(caught, "the fish catches the champion (FizzMarinerDoomBomb): " + Names(hit.Foe));
+        TestAssert.False(ground, "a fish that caught a champion lands no second fish on the ground");
+    }
+
+    /// <summary>
+    /// Batch 870 (the screenshot sweep: Garen standing at Dragon's Descent's landing point took no damage): an enemy on the flight path is hit
+    /// once and knocked toward the landing point. <c>ShyvanaTransformLeap</c>'s <c>BuffOnUpdateActions</c> (every 0.25 s) takes every unit within
+    /// 200 of Shyvana, adds <c>ShyvanaTransformCheck</c> (once per unit), applies the damage and adds <c>ShyvanaTransformDamage</c> (the knock).
+    /// </summary>
+    [Check("scripting.p132-shyvana-descent-hits-a-unit-on-its-path")]
+    public static void ShyvanaDescentHitsAUnitOnItsPath()
+    {
+        using var match = new Match("Shyvana");
+        match.Hero.Level = 6;
+        match.Learn(1);
+        match.Refill();
+        match.Foe.Position = new Position2(7400, 7000);
+        var before = match.Foe.Health;
+        TestAssert.True(match.Cast(3, at: new Position2(7800, 7000)), "Dragon's Descent casts 800 units ahead: " + match.CanCast(3).Reason);
+        var knocked = false;
+        for (var step = 0; step < 40; step++)
+        {
+            match.Advance(0.05);
+            knocked |= Buff(match.Foe, "ShyvanaTransformDamage") is not null;
+        }
+        TestAssert.True(before - match.Foe.Health > 1.0, $"the enemy on the path takes damage (lost {before - match.Foe.Health:0.#})");
+        TestAssert.True(knocked, "the enemy on the path is knocked (ShyvanaTransformDamage): " + Names(match.Foe));
+    }
+
+    /// <summary>
+    /// Batch 870 (the screenshot sweep: Orb of Deception took 19 health off Garen, one pass): the orb hits an enemy on its line twice, magic damage
+    /// on the way out (<c>AhriOrbDamage</c>) and true damage on the way back (<c>AhriOrbDamageSilence</c>; 1.0.0.131, "Orb true damage return"), the
+    /// return within about a second. The return line leaves at 60 and speeds up by 1900 to 2600 (<c>AhriOrbReturn</c>'s MissileAccel, which the
+    /// server's line ignored: the orb crawled back at 60 units a second and its true damage never landed).
+    /// </summary>
+    [Check("scripting.p132-ahri-orb-hits-on-the-way-out-and-back")]
+    public static void AhriOrbHitsOnTheWayOutAndBack()
+    {
+        using var match = new Match("Ahri");
+        match.Hero.Level = 6;
+        match.Learn(1);
+        match.Refill();
+        match.Foe.Position = new Position2(7400, 7000);
+        TestAssert.True(match.Cast(0, at: match.Foe.Position), "Orb of Deception casts at the enemy");
+        match.Advance(2.0);
+        var hits = HitsOn(match, "Foe");
+        var seen = string.Join("; ", hits.Select(hit => $"{hit.At:0.00} dealt {hit.Dealt:0.#} raw {hit.Raw:0.#}"));
+        TestAssert.Equal(2, hits.Count, "the orb hits the enemy out and back: " + seen);
+        TestAssert.True(hits[0].Dealt < hits[0].Raw, "the way out is magic damage (mitigated): " + seen);
+        NearF32(hits[1].Raw, hits[1].Dealt, "the way back is true damage (unmitigated): " + seen);
+        TestAssert.True(hits[1].At < 1.5, "the orb is back past the enemy within about a second: " + seen);
+    }
+
+    /// <summary>
+    /// Batch 870 (the screenshot sweep: "Snared!" over Sejuani on every Glacial Prison): the listener <c>SejuaniGlacialPrisonStart</c> puts on Sejuani
+    /// for 2 s (its <c>BuffOnMissileEnd</c> detonates the prison) carries Dark Binding's popup template, which the client paints over its own hero on
+    /// the add. The listener stays on the server and still detonates the prison on the enemy; no client is sent its add.
+    /// </summary>
+    [Check("scripting.p132-sejuani-glacial-prison-shows-no-snared-text-on-her")]
+    public static void SejuaniGlacialPrisonShowsNoSnaredTextOnHer()
+    {
+        var start = BbScriptLoader.Load(GameData.Default.Paths, "Spells/SejuaniGlacialPrisonStart.luaobj").Script!;
+        TestAssert.True(start.Global("PopupMessage1") is BbValue.Text { Value: "game_floatingtext_Snared" }, "the listener's template draws 'Snared'");
+        using var match = new Match("Sejuani");
+        match.Hero.Level = 6;
+        match.Learn(1);
+        match.Refill();
+        var wire = Observe(match, match.Hero.Team, match.Hero);
+        TestAssert.True(match.Cast(3, at: match.Foe.Position), "Glacial Prison casts at the enemy");
+        var listening = false;
+        for (var step = 0; step < 30; step++)
+        {
+            match.Advance(0.05);
+            listening |= Buff(match.Hero, "SejuaniGlacialPrisonStart") is not null;
+        }
+        TestAssert.True(listening, "the listener is on Sejuani on the server");
+        TestAssert.True(HitsOn(match, "Foe").Count >= 1, "the prison still detonates on the enemy");
+        var hash = SpellPackets.BuffNameHash("SejuaniGlacialPrisonStart");
+        var sent = wire.Packets.Any(item => item.Packet.Plaintext.Span[0] == SpellPackets.BuffAddOpcode &&
+            SpellPackets.TryReadBuffAdd(item.Packet.Plaintext.Span, out var add) && add.BuffNameHash == hash);
+        TestAssert.False(sent, "no client is sent the listener's add (its popup painted 'Snared!' over Sejuani)");
+    }
 }

@@ -203,6 +203,17 @@ public static class HostModeChecks
         Delete(home.Root);
     }
 
+    /// <summary>
+    /// Batch 867: the running mode logs to the console (the log file) and never to the Windows Application event log, whose provider ASP.NET
+    /// Core's default builder adds on Windows (batch 863 found the host's request paths there).
+    /// </summary>
+    internal static void ConsoleLogOnly(HostLoop loop, string mode)
+    {
+        var providers = loop.LoggerProviders();
+        TestAssert.True(providers.Contains("ConsoleLoggerProvider") && !providers.Contains("EventLogLoggerProvider"),
+            $"{mode} logs to the console only: {string.Join(", ", providers)}");
+    }
+
     internal static bool ChampionCatalogLoaded() =>
         typeof(ChampionCatalog).GetField("_loaded", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) is { } lazy &&
         lazy.GetType().GetProperty("IsValueCreated")?.GetValue(lazy) is true;
@@ -304,7 +315,7 @@ public static class HostModeChecks
             await WaitForHealthAsync(browser, "ready", run);
             await SignedInAgainAsync(browser, reopen);
             await StepAsync(browser, HostSteps.Start, HostDashboard.PagePath);
-            TestAssert.True((await EndAsync(browser, "stop")).Contains("Amberline has stopped", StringComparison.Ordinal), "Stop answers");
+            TestAssert.True((await EndAsync(browser, "stop")).Contains($"{HostPages.Product} has stopped", StringComparison.Ordinal), "Stop answers");
             TestAssert.Equal(0, await run.WaitAsync(TimeSpan.FromSeconds(60)), "Stop ends every process, and the window's exit code is 0");
             TestAssert.Equal(1, home.Opened.Count, "the new processes open no browser page");
             TestAssert.False(home.Screen.ToString().Contains("Amberline could not start again", StringComparison.Ordinal), home.Screen.ToString());

@@ -121,12 +121,14 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
             Encounters = new EncounterService(EncounterCatalog.Load(map), spawnUnit, spawnMinion),
             Capture = hooks,
         };
-        return new BehaviorTreeQuestHost(BehaviorTreeLoader.LoadMap(map), context, turrets, guardians)
+        var host = new BehaviorTreeQuestHost(BehaviorTreeLoader.LoadMap(map), context, turrets, guardians)
         {
             Navigation = navigation,
             Minions = minions,
             Random = random,
         };
+        host.PlanWaveLanes();
+        return host;
     }
 
     /// <summary>Batch 447: the Dominion score, once <see cref="AttachScore"/> has run (null until then).</summary>
@@ -434,6 +436,27 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
     // Batch 499: each lane's route as its first squad got it (OdinWaves.Route), by nav list and direction; every squad of a lane starts on its marker.
     private readonly Dictionary<(int Nav, bool Reverse), IReadOnlyList<Position2>> _laneRoutes = new();
 
+    // Batch 868: each lane's route planned from its marker while the match is composed (PlanWaveLanes), with the start it was planned from.
+    private readonly Dictionary<(int Nav, bool Reverse), (Position2 Start, IReadOnlyList<Position2> Route)> _plannedLaneRoutes = new();
+
+    /// <summary>
+    /// Batch 868: plans every wave lane's route (<see cref="OdinWaves.Route"/>, the grid's A* leg by leg) from its spawn marker while the match is
+    /// composed, before the players load. Planned at a lane's first squad, the A* ran inside the wave release's simulation step: 19 to 29 ms of
+    /// that step at the first release on an idle machine (2 to 4 lanes), 2 to 7 ms at a later one. A lane's first squad takes the planned route only
+    /// when its unit stands where the route was planned from (every squad spawns on its marker, <see cref="SpawnWaves"/>), so the route is the one
+    /// the squad planned before; elsewhere the squad plans from where it stands, as it did.
+    /// </summary>
+    private void PlanWaveLanes()
+    {
+        if (Navigation is null || Minions is null) return;
+        foreach (var lane in OdinWaves.Lanes)
+        {
+            if (Context.NamedLocation(lane.Marker) is not { } at) continue;
+            var start = new Position2(at.X, at.Z);
+            _plannedLaneRoutes[(lane.Nav, lane.Reverse)] = (start, OdinWaves.Route(Context.NamedLocation, lane.Nav, lane.Reverse, start, Navigation));
+        }
+    }
+
     /// <summary>
     /// Batch 499, the wave caller. CapturePointManager creates SmallWave (<c>WaveEncounterID</c>, OdinScriptBehaviorTrees.xml:2031), sets
     /// <c>NextWaveSpawnTime</c> to the game time (:2039) and <c>WaveSpawnPeriod</c> 25 (:2045), and no shipped node reads them. The shipped spawner
@@ -502,7 +525,10 @@ public sealed partial class BehaviorTreeQuestHost : IDominionControl
         // DIAGNOSTICS: a host without a minion AI (a check's harness) leaves the squad standing on its marker with no route and no script.
         if (Navigation is null || Minions is null || Context.Encounters?.LaneOf(unit) is not { } lane) return;
         if (!_laneRoutes.TryGetValue((lane.Lane, lane.Reverse), out var route))
-            _laneRoutes[(lane.Lane, lane.Reverse)] = route = OdinWaves.Route(Context.NamedLocation, lane.Lane, lane.Reverse, unit.Position, Navigation);
+            _laneRoutes[(lane.Lane, lane.Reverse)] = route =
+                _plannedLaneRoutes.TryGetValue((lane.Lane, lane.Reverse), out var planned) && planned.Start == unit.Position
+                    ? planned.Route
+                    : OdinWaves.Route(Context.NamedLocation, lane.Lane, lane.Reverse, unit.Position, Navigation);
         if (route.Count < 2)
         {
             Context.Note("wave-lane:" + lane.Lane, $"the scene has no __NAV_{lane.Lane} list to walk");

@@ -76,9 +76,20 @@ internal sealed partial class BbHookRouter
         }
     }
 
+    /// <summary>
+    /// The scope of a missile's spell hooks. Batch 870: its <c>InstanceVars</c> is the caster's <c>CharVars</c>, as for an attack's
+    /// <see cref="AttackScope"/>. 1.0.0.132's Chum the Waters needs it: <c>FizzMarinerDoom</c>'s <c>SelfExecute</c> sets <c>CharVars.UltFired</c>
+    /// true (instr 0158-0160) and is the only writer of true; <c>FizzMarinerDoomMissile</c>'s <c>SpellOnMissileEnd</c> lands the fish on the
+    /// ground only when <c>InstanceVars.UltFired</c> is true (0526-0528) and then clears both tables (0587-0597), and its <c>TargetExecute</c>
+    /// (the fish caught a champion) clears <c>CharVars.UltFired</c> (0654-0656) so the end that follows lands no second fish. With a fresh
+    /// table the fish that missed every champion never landed and no shark rose (the batch 870 screenshot sweep). The other shipped missile
+    /// hooks that name <c>InstanceVars</c> (Orianna's Izuna, DamageIzuna, Dissonance, Redact and Return, Rumble's Equalizer) only write it or
+    /// read a name their <c>CharVars</c> never hold, so they see no difference.
+    /// </summary>
     private BbScope MissileSpellScope(BbMissileFlight flight, Entity? target)
     {
         var scope = NewScope(flight.Caster, flight.Caster, target, flight.Caster, flight.Rank);
+        scope.InstanceVars = scope.CharVars;
         // Batch 772: one table for the missile's whole flight (BbMissileFlight.SpellVars), and the missile's id as MissileNetworkID, which
         // AhriFoxFireMissile's SpellOnMissileUpdate passes to BBDestroyMissile.
         scope.SpellVars = flight.SpellVars ??= SpellVars(flight.Script);

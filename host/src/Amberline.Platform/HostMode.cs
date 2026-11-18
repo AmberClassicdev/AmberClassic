@@ -30,6 +30,8 @@ public sealed record HostPaths(string Data, string App)
 
     public string Settings => Path.Combine(Data, "platform.json");
     public string Logs => Path.Combine(Data, "logs");
+    /// <summary>NOT RETAIL (batch 857): the install lock's record that a full pass completed (<see cref="Folders.InstallLock.Check"/>).</summary>
+    public string LockRecord => Path.Combine(Data, "host", "install-lock.txt");
     public string ServerExecutable =>
         Path.GetFullPath(Path.Combine(App, "..", "server", OperatingSystem.IsWindows() ? "Amberline.Server.exe" : "Amberline.Server"));
     public string Bootstrap => Path.GetFullPath(Path.Combine(App, "..", "bootstrap"));
@@ -117,6 +119,25 @@ public sealed class HostLoop(HostPaths paths, Action<string> openBrowser, TextWr
     /// </summary>
     public CopyPlaces CopyFrom { get; set; } = CopyPlaces.Nowhere;
 
+    /// <summary>
+    /// NOT RETAIL (batch 857): the install lock of this Platform's one-folder install (<see cref="Amberline.Platform.Folders.InstallLock.Check"/>):
+    /// null when locked, else why not. By default none, so a check's loop never touches a folder and the dashboard shows no line; only
+    /// <see cref="HostMode.MainAsync"/> passes the real one, for an installed Platform.
+    /// </summary>
+    public Func<string?>? LockCheck { get; set; }
+
+    /// <summary>The dashboard's install line from the last <see cref="CheckLock"/>: locked or not, and its words; null shows none.</summary>
+    public (bool Locked, string Text)? LockLine { get; private set; }
+
+    /// <summary>Runs <see cref="LockCheck"/> (a full pass the first time after an update or a move, else the folder alone) and keeps its line.</summary>
+    public void CheckLock()
+    {
+        if (LockCheck is not { } check) return;
+        var problem = check();
+        LockLine = problem is null ? (true, Amberline.Platform.Folders.InstallLock.LockedLine)
+            : (false, $"Other Windows accounts on this PC may be able to change this install: {problem}");
+    }
+
     /// <summary>The cleanup Uninstall Amberline handed the install folder to; <see cref="HostMode.MainAsync"/> starts it once the loop has ended.</summary>
     public ProcessStartInfo? Cleanup { get; internal set; }
 
@@ -124,6 +145,12 @@ public sealed class HostLoop(HostPaths paths, Action<string> openBrowser, TextWr
     public Endpoint[] Routes()
     {
         lock (_gate) return _app is null ? [] : ((IEndpointRouteBuilder)_app).DataSources.SelectMany(source => source.Endpoints).ToArray();
+    }
+
+    /// <summary>DIAGNOSTICS (batch 867): the type names of the mode running now's loggers, so a check sees that none is the Windows event log.</summary>
+    public string[] LoggerProviders()
+    {
+        lock (_gate) return _app is null ? [] : _app.Services.GetServices<ILoggerProvider>().Select(provider => provider.GetType().Name).ToArray();
     }
 
     /// <summary>Why the last start fell back to setup mode (shown on the setup page), or null.</summary>
@@ -224,13 +251,14 @@ public static class HostMode
         var exit = install is null && options.Length > 0
             ? Refuse(screen, OptionsProblem(options))
             : install is { AsksFolder: true } && !install.AskFolder(Console.ReadLine) ? Refuse(screen, "Amberline was not installed.", 1)
-            : install?.Check() is { } refused ? Refuse(screen, refused)
-            : await RunHomeAsync(install is null ? paths : install.Target, install, screen);
+            // Batch 857: a new install folder is made and locked before its first write (the log below).
+            : (install?.Check() ?? install?.LockNew()) is { } refused ? Refuse(screen, refused)
+            : await RunHomeAsync(install is null ? paths : install.Target, install, screen, localAppData);
         return exit;
     }
 
     /// <summary>The start once the data folder is known: the log, then the install or the loop.</summary>
-    private static async Task<int> RunHomeAsync(HostPaths paths, HostInstall? install, TextWriter screen)
+    private static async Task<int> RunHomeAsync(HostPaths paths, HostInstall? install, TextWriter screen, string localAppData)
     {
         // PlatformContent reads the data folder from this variable on first use; a Restart's new process and the installed
         // Platform an install starts inherit it.
@@ -242,14 +270,21 @@ public static class HostMode
         var log = OpenLog(paths.Logs, DateTime.Now);
         Console.SetOut(log);
         Console.SetError(log);
-        HostLoop? loop = null;
-        var exit = install is not null ? await install.RunAsync()
-            : await RunAsync(loop = new HostLoop(paths, OpenBrowser, screen)
-            {
-                Folders = FolderSetup.ThisPc(), Addresses = HostAddressSources.Live, Play = new(HostPlay.Start), Network = HostNetwork.Windows,
-                NextProcess = ThisProgram(), Restarted = restarted, Uninstall = UninstallPlaces.ThisPc(), Releases = HostReleases.Live,
-                CopyFrom = CopyPlaces.ThisPc(),
-            });
+        var installed = HostPaths.InstallFolder(paths.App);
+        var loop = install is not null ? null : new HostLoop(paths, OpenBrowser, screen)
+        {
+            Folders = FolderSetup.ThisPc(), Addresses = HostAddressSources.Live, Play = new(HostPlay.Start), Network = HostNetwork.Windows,
+            NextProcess = ThisProgram(), Restarted = restarted, Uninstall = UninstallPlaces.ThisPc(), Releases = HostReleases.Live,
+            CopyFrom = CopyPlaces.ThisPc(),
+            // NOT RETAIL (batch 857): an installed Platform locks its install folder: a full pass at its first start after an update (or a move
+            // into it), then the folder alone. One that cannot be locked never stops the server: Status says why.
+            LockCheck = installed is null ? null : () => LockInstall(installed, paths, localAppData),
+        };
+        // The first start after an update or a move walks the whole install: the window says so (batch 653: each wait says how long it takes).
+        if (loop?.LockCheck is not null && !File.Exists(paths.LockRecord)) screen.WriteLine(LockingLine);
+        loop?.CheckLock();
+        if (loop?.LockLine is { Locked: false } notLocked) Console.Error.WriteLine(notLocked.Text);
+        var exit = install is not null ? await install.RunAsync() : await RunAsync(loop!);
         // A new process that a Restart started asked for Enter itself.
         if (exit != 0 && loop?.HandedOver != true) WaitForEnter(screen);
         // After Uninstall Amberline: the cleanup deletes the folder once this process has ended.
@@ -263,6 +298,37 @@ public static class HostMode
         WaitForEnter(screen);
         return exit;
     }
+
+    /// <summary>
+    /// NOT RETAIL (batch 857; review HIGH 2 and its follow-up): an installed Platform's lock at its start (<see cref="HostLoop.LockCheck"/>): its
+    /// install folder, then the 2011 launcher folder beside it (<see cref="ClientPlan.LauncherBeside"/>) whenever it exists. One that holds the
+    /// client zip's mark (<see cref="Folders.ClientZip.Marker"/>) is locked with a full pass (a small folder; earlier versions left it unlocked);
+    /// one without it is reported, and Amberline never serves or runs it (<see cref="UsableLauncher"/>). Null when all is locked; else the first
+    /// reason. DIAGNOSTICS: <paramref name="top"/> as in <c>InstallLock.Check</c>.
+    /// </summary>
+    public static string? LockInstall(string install, HostPaths paths, string localAppData, string? top = null)
+    {
+        if (Folders.InstallLock.Check(install, paths.LockRecord, localAppData, top) is { } problem) return problem;
+        var launcher = ClientPlan.LauncherBeside(install);
+        if (!Directory.Exists(launcher)) return null;
+        return File.Exists(Path.Combine(launcher, Folders.ClientZip.Marker)) ? Folders.InstallLock.Lock(launcher, profile: localAppData, top: top)
+            : $"{launcher} was not put there by Amberline, so Amberline does not use it";
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 857 review): the 2011 launcher folder the Platform may share or start: <paramref name="launcher"/> (the setting), except the
+    /// folder beside the install while it lacks the client zip's mark or cannot be locked now (<see cref="LockInstall"/>'s rule); null then.
+    /// </summary>
+    public static string? UsableLauncher(string? launcher, HostPaths paths)
+    {
+        if (launcher is null || HostPaths.InstallFolder(paths.App) is not { } install || !Folders.FolderMove.Same(launcher, ClientPlan.LauncherBeside(install)))
+            return launcher;
+        return File.Exists(Path.Combine(launcher, Folders.ClientZip.Marker)) && Folders.InstallLock.Lock(launcher) is null ? launcher : null;
+    }
+
+
+    /// <summary>NOT RETAIL (batch 857): the window's line while the first start after an update or a move checks the whole install's lock.</summary>
+    public const string LockingLine = "Checking that only your Windows account can change this install. This takes up to a minute.";
 
     /// <summary>The window's end, in the word list's words (batch 653).</summary>
     public const string CloseLine = "Press Enter to close.";
@@ -430,7 +496,8 @@ public static class HostMode
     private static async Task<bool> RunSetupAsync(HostLoop loop, int port)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
-        // As the full Platform's (Program.RunAsync): ASP.NET Core's own lines from Warning up.
+        // As the full Platform's (Program.RunAsync): the console (the log file) alone, ASP.NET Core's own lines from Warning up.
+        builder.Logging.ConsoleOnly();
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.Logging.AddFilter("Microsoft.AspNetCore.Antiforgery", LogLevel.Error);
         builder.WebHost.ConfigureKestrel(o =>
@@ -529,6 +596,14 @@ public static class HostMode
     /// </summary>
     internal static IResult Page(string content, int status = StatusCodes.Status200OK, string? refresh = null, int step = 0, bool nav = true) =>
         HostPages.Page(content, status, refresh, step, nav);
+
+    /// <summary>
+    /// Batch 867: the logging of every web host the Platform builds (the full Platform, setup mode, the old shortcuts' stand-in): the console
+    /// alone, which a home start writes to its log file (<see cref="OpenLog"/>). ASP.NET Core's default builder also writes to the Windows
+    /// Application event log on Windows, from Warning up under a rule of its own that the category filters do not reach, so the host's
+    /// request paths went there (batch 863).
+    /// </summary>
+    internal static ILoggingBuilder ConsoleOnly(this ILoggingBuilder logging) => logging.ClearProviders().AddConsole();
 
     private static void OpenBrowser(string url)
     {

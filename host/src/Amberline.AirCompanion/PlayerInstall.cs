@@ -234,6 +234,8 @@ internal static class PlayerInstall
             if (folders.Any(folder => Inside(install, folder)))
                 throw new InstallRefusedException($"The install folder is inside the {label} folder. Choose an install folder somewhere else.");
         if (IsDriveRoot(install)) throw new InstallRefusedException("Choose a folder for the install, not a whole drive.");
+        // NOT RETAIL (batch 857): a folder of another Windows account, or a link, never becomes the install (InstallLock.Refusal).
+        if (InstallLock.Refusal(install) is { } foreign) throw new InstallRefusedException($"{foreign}. Choose another install folder.");
         if (HostInstallation(install) is not null)
             throw new InstallRefusedException("The install folder is inside an Amberline server installation. Choose a folder of your own.");
         var host = HostFolders(profile);
@@ -370,7 +372,14 @@ internal static class PlayerInstall
         // since the folder is gone after it.
         var launcherTarget = Path.Combine(plan.Install, LauncherFolder);
         var launcherList = plan.Launcher is { } picked && !Same(picked, launcherTarget) ? ClassicLauncherFiles.ManifestFor(picked) : null;
+        // NOT RETAIL (batch 857, design step 4; review HIGH 1, MEDIUM 4): the install lock's shared first step before anything moves in
+        // (InstallLock.Prepare): a link, another account's folder or one that could not be locked refuses the install; a volume without permissions
+        // only goes to the log.
+        if (InstallLock.Prepare(plan.Install, profile.LocalAppData, Markers) is { } notLocked) Log(profile, $"install: not locked: {notLocked}");
         var leftovers = Execute(plan, progress, options, cancel);
+        // A move on one drive keeps the old permissions: each folder moved in takes the install's, and the next start checks the whole install.
+        foreach (var move in plan.Moves)
+            if (InstallLock.Restamp(move.Target, LockRecord(plan.Install)) is { } moved) Log(profile, $"install: {move.Label} not locked: {moved}");
         var stayed = new List<string>();
         foreach (var move in plan.Moves.Where(move => move.Entries is not null && !move.KeepSource))
             if (Others(move) is { Count: > 0 } others) stayed.Add($"These stayed in {move.Source}, because they are not part of the {move.Label}: {string.Join(", ", others)}.");
@@ -578,11 +587,28 @@ internal static class PlayerInstall
                 throw;
             }
             TryDeleteTree(old);
+            // NOT RETAIL (batch 857): the swapped-in tool takes the install's lock, and the next start checks the whole install (InstallLock).
+            if (InstallLock.Restamp(target, LockRecord(install)) is { } notLocked) Console.Error.WriteLine($"player tool: not locked: {notLocked}");
         }
         else if (!File.Exists(Path.Combine(target, WindowlessName))) WriteWindowless(target);
         var mark = source + ".sha256";
         if (File.Exists(mark) && !Same(mark, target + ".sha256")) File.Copy(mark, target + ".sha256", overwrite: true);
     }
+
+    /// <summary>
+    /// NOT RETAIL (batch 857): the install lock's record that a full pass completed (<see cref="InstallLock.Check"/>), in <c>servers</c>, which the
+    /// removal deletes whole.
+    /// </summary>
+    internal static string LockRecord(string install) => Path.Combine(install, "servers", "install-lock.txt");
+
+    /// <summary>NOT RETAIL (batch 857 review, LOW 10): what marks a player install folder as Amberline's (the install window's own test, and a download's staging folder).</summary>
+    internal static readonly string[] Markers = [ToolFolder, "servers", PlayerDownload.Staging];
+
+    /// <summary>
+    /// NOT RETAIL (batch 857, design step 4): the shortcut's start locks the install: a full pass the first time after the tool's update (or any
+    /// move into the install), then the folder alone. Null when locked; else why not, which never stops the start.
+    /// </summary>
+    internal static string? CheckLock(string install, string profile) => InstallLock.Check(install, LockRecord(install), profile);
 
     /// <summary>
     /// NOT RETAIL: the desktop shortcut's windowless program. The .NET apphost is the same file for a console and a windowed program: the
@@ -670,7 +696,8 @@ internal static class PlayerInstall
             if (Directory.Exists(next) && TryDeleteTree(next)) TryDelete(next + ".sha256");
             return null;
         }
-        if (Mark(next) == sha && File.Exists(Path.Combine(next, WindowlessName))) return next;
+        // Batch 857 review (MEDIUM 7): a staged copy is never reused on its .sha256 mark alone (anyone who could write it could keep the mark): it is
+        // downloaded and checked against the server's SHA-256 again.
         await DownloadToolAsync(connection.Host, connection.Port, connection.CertificateSha25664hex, sha, next, cancel);
         WriteWindowless(next);
         File.WriteAllText(next + ".sha256", sha);

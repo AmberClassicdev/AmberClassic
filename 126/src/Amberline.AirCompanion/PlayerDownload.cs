@@ -181,6 +181,15 @@ internal static class PlayerDownload
         CancellationToken cancel)
     {
         progress?.Report(new("Checking the downloaded game…"));
+        // NOT RETAIL (batch 857 review, HIGH 1): every file is hashed again just before it is put in place, against the list (the pinned server's).
+        foreach (var entry in offer.Files)
+        {
+            var local = Local(staging, entry.Path);
+            if (!File.Exists(local))
+                throw new InstallRefusedException($"The download from {server} is not complete ({entry.Path} is missing). Nothing was installed; choose Download again.");
+            if (!Same(local, entry))
+                throw new InstallRefusedException($"A downloaded file changed before it was put in place ({entry.Path}). Nothing was installed; choose Download again.");
+        }
         if (Listed(offer, "game/") && RetailClients.GameProblem(Path.Combine(staging, GameRelease), pins.Game) is { } game)
             throw new InstallRefusedException($"The game from {server} is not complete ({game}). Nothing was installed; ask the host.");
         if (Listed(offer, "air/") && RetailClients.AirProblem(Path.Combine(staging, "air"), pins.Air) is { } air)
@@ -218,8 +227,12 @@ internal static class PlayerDownload
     /// <paramref name="plan"/>'s install. Cancel works until the renames; a second call continues where the first stopped.
     /// </summary>
     internal static async Task DownloadAsync(HttpClient client, Uri origin, Offer offer, PlayerInstall.Plan plan, ClientPins pins, string server,
-        IProgress<InstallProgress>? progress, CancellationToken cancel)
+        string profile, IProgress<InstallProgress>? progress, CancellationToken cancel)
     {
+        // NOT RETAIL (batch 857 review, HIGH 1): the install lock's shared first step (InstallLock.Prepare) before the first write into the install,
+        // the staging folder: a link, another account's folder or one that could not be locked refuses the download. <paramref name="profile"/> is
+        // the player's local application data.
+        if (InstallLock.Prepare(plan.Install, profile, PlayerInstall.Markers) is { } notLocked) Console.Error.WriteLine($"download: not locked: {notLocked}");
         var staging = Path.Combine(plan.Install, Staging);
         Directory.CreateDirectory(staging);
         var files = offer.Files.ToDictionary(entry => Local(staging, entry.Path), StringComparer.OrdinalIgnoreCase);

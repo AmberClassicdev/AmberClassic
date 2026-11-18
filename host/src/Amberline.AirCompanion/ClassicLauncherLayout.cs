@@ -31,8 +31,9 @@ internal static partial class ClassicLauncherLayout
     /// only (<see cref="TakeOver"/>). Nothing unstamped goes: the game's managed layout and the launcher's root files stay.
     /// </summary>
     /// <param name="running">DIAGNOSTICS: test seam only; <see cref="ClassicStart.RunningFrom"/> otherwise.</param>
+    /// <param name="top">DIAGNOSTICS (batch 857): a check's own throwaway folder, above which the root's lock looks no further (InstallLock).</param>
     internal static (ClassicLayout? Layout, string? Refusal) Ensure(ClassicLayoutRequest request, Action<string> log,
-        Func<IReadOnlyList<string>, string?>? running = null)
+        Func<IReadOnlyList<string>, string?>? running = null, string? top = null)
     {
         (ClassicLayout?, string?) Refuse(string reason)
         {
@@ -46,6 +47,7 @@ internal static partial class ClassicLauncherLayout
             // The launcher starts AIR and the game with unquoted command lines (design 2026-11-12 §3).
             if (root.Contains(' ')) return Refuse($"The folder {root} has a space in its path, so the classic launcher cannot start from it.");
             var items = Plan(request);
+            if (RootRefusal(root, top) is { } refusedRoot) return Refuse(refusedRoot);
             if (TakeOver(root, log, running ?? ClassicStart.RunningFrom) is { } taken) return Refuse(taken);
             var stampPath = Path.Combine(root, LauncherProject, StampName);
             var lines = new HashSet<string>(File.Exists(stampPath) ? File.ReadAllLines(stampPath).Where(line => line.Length > 0) : [], StringComparer.OrdinalIgnoreCase);
@@ -99,7 +101,7 @@ internal static partial class ClassicLauncherLayout
                 }
                 else if (item.LinkTo is { } target)
                 {
-                    if (SamePath(new FileInfo(full).LinkTarget!, target)) continue;
+                    if (new FileInfo(full).LinkTarget is { } at && SamePath(at, target)) continue;
                     Directory.Delete(full);   // not recursive: removes the link only, never what it points at
                     Junction(full, target);
                     log($"classic-layout: re-pointed {item.Path} to {target}");
@@ -111,6 +113,7 @@ internal static partial class ClassicLauncherLayout
                     changed++;
                 }
             }
+            if (LockRoot(root, items, lines, top) is { } notLocked) return Refuse(notLocked);
             log($"classic-layout: {created} paths created, {changed} refreshed under {root}");
             var deploy = Path.Combine(root, LauncherProject, "releases", LauncherVersion, "deploy");
             return (new ClassicLayout(deploy, Path.Combine(deploy, "LoLLauncher.exe")), null);
@@ -121,6 +124,77 @@ internal static partial class ClassicLauncherLayout
         {
             return Refuse($"The classic launcher's folders under {request.Root} could not be prepared ({exception.GetType().Name}: {exception.Message}).");
         }
+    }
+
+    /// <summary>The file that marks a RADS root as made by Amberline (both lines; never stamped, so neither line's removal takes it).</summary>
+    internal const string RootMarker = "amberline-rads.txt";
+
+    /// <summary>The root's own install lock record (<see cref="InstallLock.Check"/>), beside its marker.</summary>
+    internal const string RootLockRecord = "amberline-rads-lock.txt";
+
+    /// <summary>
+    /// NOT RETAIL (batch 857 review, HIGH 3, and the orchestrator's final rulings of 17 November 2026): the RADS root the classic start writes the
+    /// launcher and its layout into, checked before anything is written. An existing root is never deleted or changed here.
+    /// <list type="bullet">
+    /// <item>The folders above every root must not be open to others (<see cref="InstallLock.Above"/>).</item>
+    /// <item>A root that is not there is made with the lock already set (<see cref="InstallLock.Prepare"/>) and marked (<see cref="RootMarker"/>).</item>
+    /// <item>Every root that is there must not be a link nor another account's (<see cref="InstallLock.Refusal"/>); one Amberline marked must be
+    /// this Windows user's own.</item>
+    /// <item>Every root that is there, marked or not, must be private with everything in it (<see cref="InstallLock.Inspect"/>, read only; the
+    /// junctions a layout stamp records are passed over). One that is not, whoever laid it out, takes the usual start, and the reason tells the
+    /// player to delete it so Amberline lays it out again, locked, at the next start.</item>
+    /// </list>
+    /// Null when the classic start may go on; else the refusal (the start falls back to the usual one, which never depends on this root).
+    /// Batch 857 re-review 2 (MEDIUM 2): the 1.0.0.126 line's managed game layout takes its root through here too (GameManagedLayout).
+    /// </summary>
+    internal static string? RootRefusal(string root, string? top)
+    {
+        if (InstallLock.Above(root, top) is { } open) return open + ".";
+        if (!Directory.Exists(root))
+        {
+            MakeRoot(root);
+            return null;
+        }
+        return Changeable(root, $"Delete the folder {root}; Amberline then lays it out again, locked to your Windows account, at the next start.");
+    }
+
+    /// <summary>
+    /// The read-only part of <see cref="RootRefusal"/> for a root that is there: not a link nor another account's, this user's own when marked, and
+    /// private with everything in it but the junctions a layout stamp records. Null when it passes; else why, with <paramref name="advice"/> after
+    /// the last reason.
+    /// </summary>
+    private static string? Changeable(string root, string? advice)
+    {
+        if (InstallLock.Refusal(root) is { } refused) return refused + ".";
+        if (File.Exists(Path.Combine(root, RootMarker)) && !InstallLock.Mine(root)) return $"{root} is not your Windows account's own folder.";
+        var junctions = new[] { StampName, OtherStampName }.Select(name => Path.Combine(root, LauncherProject, name)).Where(File.Exists)
+            .SelectMany(File.ReadAllLines).Where(line => line.StartsWith(JunctionMark, StringComparison.Ordinal))
+            .Select(line => Path.Combine(root, StampedPath(line))).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return InstallLock.Inspect(root, entry => junctions.Contains(entry.FullName)) is { } changeable
+            ? $"{changeable}." + (advice is null ? "" : " " + advice) : null;
+    }
+
+    private static void MakeRoot(string root)
+    {
+        InstallLock.Prepare(root, null, [RootMarker]);
+        File.WriteAllText(Path.Combine(root, RootMarker), "Amberline made this folder for the 2011 launcher and keeps it locked to your Windows account.\r\n");
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 857 review, HIGH 3 and its follow-ups): once the layout is built, a root Amberline made is locked (a full pass after any
+    /// change, else the folder alone, with its own record). Only the junctions this line's layout made are passed over: stamped with "J ", pointing
+    /// where <paramref name="items"/> say, owned by a trusted account; any other link stops it. Anything not locked (a link, another account's
+    /// file, one that could not be locked, the folders above it open) refuses the classic start. Null when the start may go on.
+    /// </summary>
+    private static string? LockRoot(string root, IReadOnlyList<Item> items, IReadOnlySet<string> stamped, string? top)
+    {
+        if (!File.Exists(Path.Combine(root, RootMarker))) return null;
+        var expected = items.Where(item => item.LinkTo is not null && stamped.Contains(JunctionMark + item.Path))
+            .ToDictionary(item => Path.Combine(root, item.Path), item => item.LinkTo!, StringComparer.OrdinalIgnoreCase);
+        bool Ours(FileSystemInfo entry) =>
+            expected.TryGetValue(entry.FullName, out var target) && entry.LinkTarget is { } at && SamePath(at, target);
+        var (problem, _) = InstallLock.Checking(root, Path.Combine(root, RootLockRecord), null, top, Ours);
+        return problem is null ? null : $"The classic launcher's folders under {root} could not be locked to your Windows account ({problem}).";
     }
 
     /// <summary>
@@ -153,15 +227,48 @@ internal static partial class ClassicLauncherLayout
     /// so does a stamped path that has become a link someone else made; a stamp line with a ".." part or outside the root is skipped and logged.
     /// After a failure the stamp is rewritten with what is still there, so a later Remove retries and Ensure still knows its own paths. Returns
     /// the paths it removed. This line's stamp only: the other line's goes in <see cref="TakeOver"/>.
+    /// Batch 857 re-review 2 (HIGH 1): a root that holds this line's stamp or the mark is checked as the classic start checks it, read only
+    /// (<see cref="InstallLock.Above"/>, then <see cref="Changeable"/>); one that fails loses nothing and throws <see cref="InstallRefusedException"/>,
+    /// which tells the player to delete the folder themselves. A root with neither, or none at all, is left alone unchecked.
     /// </summary>
-    internal static IReadOnlyList<string> Remove(string root, Action<string> log) => Remove(root, log, StampName);
+    internal static IReadOnlyList<string> Remove(string root, Action<string> log)
+    {
+        root = Path.GetFullPath(root);
+        if (!File.Exists(Path.Combine(root, LauncherProject, StampName)) && !File.Exists(Path.Combine(root, RootMarker))) return [];
+        if ((InstallLock.Above(root, null) is { } open ? open + "." : Changeable(root, null)) is { } refused)
+            throw new InstallRefusedException($"{refused} Amberline removed nothing there; delete the folder {root} yourself.");
+        var removed = Remove(root, log, StampName);
+        // Batch 857 review: the root's mark and lock record go with the last of this layout, so a root that held nothing else is empty again (a
+        // takeover by the other line keeps them: the root stays Amberline's).
+        string[] own = [Path.Combine(root, RootMarker), Path.Combine(root, RootLockRecord)];
+        try
+        {
+            if (Directory.Exists(root) && Directory.EnumerateFileSystemEntries(root).All(entry => own.Contains(entry, StringComparer.OrdinalIgnoreCase)))
+                foreach (var path in own.Where(File.Exists)) File.Delete(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { log($"classic-layout: could not remove the root's mark ({exception.Message})"); }
+        return removed;
+    }
 
     private static IReadOnlyList<string> Remove(string root, Action<string> log, string stampName)
     {
         root = Path.GetFullPath(root);
         var stampPath = Path.Combine(root, LauncherProject, stampName);
-        if (!File.Exists(stampPath)) return [];
         var inside = root.TrimEnd('\\', '/') + @"\";
+        // Batch 857 re-review 2 (HIGH 1): a path is reached through a link when any folder between the root and it is one; such a path is never
+        // read, rewritten or deleted (only a stamped junction itself goes, as a link).
+        bool Through(string path)
+        {
+            for (var folder = Path.GetDirectoryName(path); folder is not null && folder.Length >= inside.Length; folder = Path.GetDirectoryName(folder))
+                if (IsLink(folder)) return true;
+            return false;
+        }
+        if (!File.Exists(stampPath)) return [];
+        if (Through(stampPath) || IsLink(stampPath))
+        {
+            log($"classic-layout: kept everything under {root}: its stamp {stampPath} is reached through a link");
+            return [];
+        }
         var entries = new List<(string Line, bool Junction, bool Whole, int Depth, string Path)>();
         foreach (var line in File.ReadAllLines(stampPath).Where(line => line.Length > 0))
         {
@@ -192,8 +299,14 @@ internal static partial class ClassicLauncherLayout
             }
         }
 
-        var paths = entries.Where(entry => !entry.Junction).OrderBy(entry => entry.Depth).ToList();
-        foreach (var entry in entries.Where(entry => entry.Junction))
+        var reachable = entries.Where(entry => !Through(entry.Path)).ToList();
+        foreach (var entry in entries.Except(reachable))
+        {
+            log($"classic-layout: kept {entry.Path}: a link lies on its way");
+            failed = true;   // the stamp keeps it
+        }
+        var paths = reachable.Where(entry => !entry.Junction).OrderBy(entry => entry.Depth).ToList();
+        foreach (var entry in reachable.Where(entry => entry.Junction))
             if (IsLink(entry.Path)) Delete(entry.Path, () => Directory.Delete(entry.Path));   // not recursive: the link only
         foreach (var entry in paths.Where(entry => entry.Whole))   // outermost first; what lay inside is then gone
             if (!IsLink(entry.Path) && Directory.Exists(entry.Path)) Delete(entry.Path, () => Directory.Delete(entry.Path, recursive: true));
@@ -230,7 +343,7 @@ internal static partial class ClassicLauncherLayout
     /// <summary>A stamp line's path, relative to the root (a junction's line carries the "J " mark).</summary>
     private static string StampedPath(string line) => line.StartsWith(JunctionMark, StringComparison.Ordinal) ? line[JunctionMark.Length..] : line;
 
-    private static bool IsLink(string path) => new FileInfo(path).LinkTarget is not null;
+    private static bool IsLink(string path) => InstallLock.IsLink(path);
 
     /// <summary>True for a file, a folder or a link (also a dangling one) at the path.</summary>
     private static bool Taken(string path) => Path.Exists(path) || IsLink(path);

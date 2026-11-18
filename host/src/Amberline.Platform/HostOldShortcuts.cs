@@ -1,6 +1,5 @@
 using System.IO.Compression;
 using System.Net;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
@@ -8,7 +7,6 @@ using System.Text.Json.Nodes;
 using System.Threading.RateLimiting;
 using Amberline.Host;
 using Microsoft.AspNetCore.Antiforgery;
-using Microsoft.Win32.SafeHandles;
 
 namespace Amberline.Platform;
 
@@ -28,8 +26,9 @@ namespace Amberline.Platform;
 /// key and the archive are read only when this Platform starts with guiding on and when the host presses the button; that snapshot (bytes,
 /// SHA-256, pin, the loaded certificate) stays in memory until Stop guiding or the Platform stops. The tries at each network test and every
 /// <see cref="HostLoop.AddressEvery"/> only bind the port again with it: a file changed on disk counts from the next start or press.</item>
-/// <item>Trust (design, Security; batch 830's rule): the install this user's own pointer names is trusted as this user's own server; the one at
-/// the drive's root only while its folders and, through the very handle each is read from, its files pass <see cref="CopyPlaces.OnlyYours"/>.
+/// <item>Trust (design, Security; batch 830's rule; batch 857 on every route, the pointer's included): an install is trusted only while its
+/// folders and, through the very handle each is read from, its files pass <see cref="CopyPlaces.OnlyYours"/>. One that does not is not locked yet:
+/// the reason tells the host to update it to <see cref="EarlierHome.LocksFrom"/> and start it once, which locks it; this line never changes it.
 /// On every route each file's handle must lead to the path asked for (no junction or symbolic link on the way) and the file must have no
 /// second name (no hard link), checked before and after the read. The before-batch-637 data route names no install, so it is not used.
 /// The key is opened read-only, never through <see cref="HostFiles.Certificate"/> (which would make a missing one), and only kept in memory;
@@ -235,6 +234,12 @@ public sealed class HostOldShortcuts : IAsyncDisposable
 
     private string NotFound => $"Your Amberline for {_from.Patch} was not found";
 
+    /// <summary>Batch 857 (owner, 17 November 2026: that line locks itself): the reason while its install is not locked, which says what to do.</summary>
+    private string NotLocked => $"Update your Amberline for {_from.Patch} to {_from.LocksFrom} or later and start it once";
+
+    // Batch 857: set when a file's own security failed the check during the last read (Open), so the reason is NotLocked rather than NotFound.
+    private volatile bool _notLocked;
+
     private async Task<Outcome> TryAsync(bool read)
     {
         var first = _first;
@@ -277,10 +282,12 @@ public sealed class HostOldShortcuts : IAsyncDisposable
     private (Snapshot? Snapshot, Outcome? Reason) ReadSnapshot()
     {
         if (Install() is not { } install) return (null, new(false, NotFound, _from.RemotePort));
+        if (!FoldersTrusted(install)) return (null, new(false, NotLocked, _from.RemotePort));
+        _notLocked = false;
         try
         {
-            if (ReadFiles(install) is not { } files) return (null, new(false, NotFound, _from.RemotePort));
-            if (!Capable(files.Archive)) return (null, new(false, $"Update your Amberline for {_from.Patch} to 0.1.25 or later", files.Port));
+            if (ReadFiles(install) is not { } files) return (null, new(false, _notLocked ? NotLocked : NotFound, _from.RemotePort));
+            if (!Capable(files.Archive)) return (null, new(false, $"Update your Amberline for {_from.Patch} to {_from.LocksFrom} or later", files.Port));
             var certificate = X509CertificateLoader.LoadPkcs12(files.Key, null);
             if (!certificate.HasPrivateKey)
             {
@@ -309,7 +316,8 @@ public sealed class HostOldShortcuts : IAsyncDisposable
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
         // As the Platform's own (Program.RunAsync): ASP.NET Core's lines from Warning up. A refused port is this class's reason on Status, tried
-        // again every few minutes, so the host's own report of it (a stack trace each time) stays out of the log.
+        // again every few minutes, so the host's own report of it (a stack trace each time) stays out of the log. Batch 867: never the event log.
+        builder.Logging.ConsoleOnly();
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Warning);
         builder.Logging.AddFilter("Microsoft.Extensions.Hosting", LogLevel.Critical);
@@ -387,18 +395,18 @@ public sealed class HostOldShortcuts : IAsyncDisposable
 
     // ---- The install and its files ----
 
-    private sealed record InstallFolder(string Folder, bool Gated);
+    private sealed record InstallFolder(string Folder);
 
     /// <summary>
     /// The install as that line's own start takes it: the folder this user's pointer names (with its marker), else the default folder at the
-    /// drive's root (with its marker), which is <c>Gated</c>. Null when neither is there.
+    /// drive's root (with its marker). Null when neither is there. Batch 857: either is trusted only while it passes <see cref="FoldersTrusted"/>.
     /// </summary>
     private InstallFolder? Install()
     {
         var places = _loop.CopyFrom;
         if (places.LocalAppData is { } local && HostLoginCopy.Pointer(Path.Combine(local, _from.Name, "install.json"), _from.Marker) is { } pointed)
-            return new(pointed, false);
-        return places.Drive is { } drive && File.Exists(Path.Combine(drive, _from.Name, _from.Marker)) ? new(Path.Combine(drive, _from.Name), true) : null;
+            return new(pointed);
+        return places.Drive is { } drive && File.Exists(Path.Combine(drive, _from.Name, _from.Marker)) ? new(Path.Combine(drive, _from.Name)) : null;
     }
 
     private static string KeyPath(InstallFolder install) => Path.Combine(install.Folder, "data", "remote", "host.pfx");
@@ -411,8 +419,8 @@ public sealed class HostOldShortcuts : IAsyncDisposable
         if (Install() is not { } install || !FoldersTrusted(install)) return false;
         try
         {
-            using var key = Open(KeyPath(install), install.Gated);
-            using var tool = Open(ToolPath(install), install.Gated);
+            using var key = Open(KeyPath(install));
+            using var tool = Open(ToolPath(install));
             return key is not null && tool is not null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
@@ -423,14 +431,14 @@ public sealed class HostOldShortcuts : IAsyncDisposable
     /// <summary>The key's and the tool's bytes and the port, each read through a checked handle; null when a check failed (the log says which part).</summary>
     private Files? ReadFiles(InstallFolder install)
     {
-        if (!FoldersTrusted(install)) return null;
-        var key = ReadChecked(KeyPath(install), install.Gated, MostKey);
-        var archive = key is null ? null : ReadChecked(ToolPath(install), install.Gated, MostArchive);
+        // Its folders passed FoldersTrusted just before (ReadSnapshot), so a refusal there names its own reason.
+        var key = ReadChecked(KeyPath(install), MostKey);
+        var archive = key is null ? null : ReadChecked(ToolPath(install), MostArchive);
         if (key is null || archive is null) return null;
         var port = _from.RemotePort;
         if (File.Exists(SettingsPath(install)))
         {
-            if (ReadChecked(SettingsPath(install), install.Gated, MostSettings) is not { } settings) return null;
+            if (ReadChecked(SettingsPath(install), MostSettings) is not { } settings) return null;
             using var document = JsonDocument.Parse(settings);
             if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("remotePort", out var value) &&
                 value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var saved) && saved is >= 1 and <= 65535) port = saved;
@@ -438,10 +446,9 @@ public sealed class HostOldShortcuts : IAsyncDisposable
         return new(key, archive, port);
     }
 
-    /// <summary>On the drive's root route, the install's folders down to both files must be this user's (<see cref="CopyPlaces.OnlyYours"/>).</summary>
+    /// <summary>On every route (batch 857), the install's folders down to both files must be this user's (<see cref="CopyPlaces.OnlyYours"/>).</summary>
     private bool FoldersTrusted(InstallFolder install)
     {
-        if (!install.Gated) return true;
         if (!OperatingSystem.IsWindows() || _loop.CopyFrom.OnlyYours is not { } yours) return false;
         foreach (var folder in new[] { "", "data", Path.Combine("data", "remote"), "app", Path.Combine("app", "bootstrap") })
             try
@@ -457,9 +464,9 @@ public sealed class HostOldShortcuts : IAsyncDisposable
     }
 
     /// <summary>The file's bytes, read through a checked handle and checked again after the read; null when a check failed or it is too large.</summary>
-    private byte[]? ReadChecked(string path, bool gated, long most)
+    private byte[]? ReadChecked(string path, long most)
     {
-        using var stream = Open(path, gated);
+        using var stream = Open(path);
         if (stream is null) return null;
         if (stream.Length > most)
         {
@@ -473,10 +480,10 @@ public sealed class HostOldShortcuts : IAsyncDisposable
 
     /// <summary>
     /// The file opened for reading while nobody may write or delete it, and checked on that very handle (design, Security): it leads to
-    /// <paramref name="path"/> itself and has one name (<see cref="Checked"/>), and on the drive's root route its security passes
+    /// <paramref name="path"/> itself and has one name (<see cref="Checked"/>), and (batch 857: on every route) its security passes
     /// <see cref="CopyPlaces.OnlyYours"/>. Null, with the reason in the log, when a check fails or the file is missing.
     /// </summary>
-    private FileStream? Open(string path, bool gated)
+    private FileStream? Open(string path)
     {
         if (!OperatingSystem.IsWindows()) return null;
         BeforeOpen?.Invoke(path);
@@ -485,8 +492,12 @@ public sealed class HostOldShortcuts : IAsyncDisposable
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { return null; }
         try
         {
-            if (Checked(stream, path) && (!gated || _loop.CopyFrom.OnlyYours is { } yours && yours(stream.GetAccessControl()))) return stream;
-            if (gated) Console.Error.WriteLine($"Other people who use this PC can change {Path.GetFileName(path)} of the Amberline for {_from.Patch}.");
+            if (Checked(stream, path))
+            {
+                if (_loop.CopyFrom.OnlyYours is { } yours && yours(stream.GetAccessControl())) return stream;
+                _notLocked = true;
+                Console.Error.WriteLine($"Other people who use this PC can change {Path.GetFileName(path)} of the Amberline for {_from.Patch}.");
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -503,42 +514,11 @@ public sealed class HostOldShortcuts : IAsyncDisposable
     /// </summary>
     private bool Checked(FileStream stream, string path)
     {
-        var final = FinalPath(stream.SafeFileHandle);
-        var links = Links(stream.SafeFileHandle);
+        var final = Folders.InstallLock.FinalPath(stream.SafeFileHandle);
+        var links = Folders.InstallLock.Links(stream.SafeFileHandle);
         if (final is not null && string.Equals(final, Path.GetFullPath(path), StringComparison.OrdinalIgnoreCase) && links == 1) return true;
         Console.Error.WriteLine($"{Path.GetFileName(path)} of the Amberline for {_from.Patch} is reached through a link, so Amberline does not use it.");
         return false;
-    }
-
-    private static string? FinalPath(SafeFileHandle handle)
-    {
-        var buffer = new char[1024];
-        var length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, 0);
-        if (length > buffer.Length)
-        {
-            buffer = new char[length];
-            length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Length, 0);
-        }
-        if (length == 0 || length > buffer.Length) return null;
-        var path = new string(buffer, 0, (int)length);
-        return path.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase) ? @"\\" + path[8..]
-            : path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path[4..] : path;
-    }
-
-    private static uint Links(SafeFileHandle handle) => GetFileInformationByHandle(handle, out var information) ? information.Links : 0;
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true)]
-    private static extern uint GetFinalPathNameByHandle(SafeFileHandle file, [Out] char[] path, uint length, uint flags);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileInformation information);
-
-    /// <summary>BY_HANDLE_FILE_INFORMATION; each FILETIME as its two halves, so the layout has no padding.</summary>
-    [StructLayout(LayoutKind.Sequential)]
-    private struct FileInformation
-    {
-        public uint Attributes, CreatedLow, CreatedHigh, AccessedLow, AccessedHigh, WrittenLow, WrittenHigh, Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
     }
 
     /// <summary>Interface 2 of batch 856: the archive's root holds <c>capabilities.json</c> whose <c>movedTo</c> is 1 (read from the bytes served).</summary>

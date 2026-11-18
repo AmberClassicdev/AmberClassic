@@ -107,7 +107,8 @@ public static class HostDashboardChecks
                 page = await answer.Content.ReadAsStringAsync();
             }
             TestAssert.Equal(1, Regex.Count(page, "<script"), "one script element");
-            TestAssert.True(page.Contains("<script src=/host/page.js defer></script>", StringComparison.Ordinal), "the script is a file");
+            // Batch 867: under its versioned address, which the browser keeps (a restarting page needs it while no process answers).
+            TestAssert.True(page.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal), "the script is a file");
             // Batch 652: the button is Play, and it says at once that the client takes a while.
             TestAssert.True(page.Contains("<form method=post action=/host/play data-wait=\"Starting the game client. This takes up to a minute.\">", StringComparison.Ordinal) &&
                 page.Contains("<button>Play</button>", StringComparison.Ordinal), "the dashboard has H12's Play button");
@@ -172,7 +173,7 @@ public static class HostDashboardChecks
             using (var stop = await browser.GetAsync("/host/stop"))
             {
                 var question = await stop.Content.ReadAsStringAsync();
-                TestAssert.True(question.Contains("<h1>Stop Amberline?</h1>", StringComparison.Ordinal) &&
+                TestAssert.True(question.Contains($"<h1>Stop {HostPages.Product}?</h1>", StringComparison.Ordinal) &&
                     question.Contains("Users cannot log in until you start Amberline again.", StringComparison.Ordinal), question);
             }
             TestAssert.False(run.IsCompleted, "asking about Stop stops nothing");
@@ -637,7 +638,7 @@ public static class HostDashboardChecks
         await home.SignInAsync(client);
 
         var page = await PageAsync(client, "/host/stop");
-        TestAssert.True(page.Contains("<h1>Stop Amberline?</h1>", StringComparison.Ordinal), page);
+        TestAssert.True(page.Contains($"<h1>Stop {HostPages.Product}?</h1>", StringComparison.Ordinal), page);
         TestAssert.True(page.Contains("1 game is running (4 players). Stopping ends it for everyone.",
             StringComparison.Ordinal), "the warning names the game and its players: " + page);
         // Batch 652: one name for the button whether games run or not, Cancel to leave, and the wait said at once.
@@ -666,7 +667,7 @@ public static class HostDashboardChecks
 
         lock (games) games.Add(new(2, 0, "Waiting for players"));
         page = await PageAsync(client, "/host/restart");
-        TestAssert.True(page.Contains("<h1>Restart Amberline?</h1>", StringComparison.Ordinal) &&
+        TestAssert.True(page.Contains($"<h1>Restart {HostPages.Product}?</h1>", StringComparison.Ordinal) &&
             page.Contains("2 games are running (6 players). Restarting ends them for everyone.", StringComparison.Ordinal) &&
             page.Contains(">Restart Amberline</button>", StringComparison.Ordinal) &&
             page.Contains("data-wait=\"Restarting Amberline. This takes a few seconds.\"", StringComparison.Ordinal), page);
@@ -674,7 +675,7 @@ public static class HostDashboardChecks
         {
             var answer = await restart.Content.ReadAsStringAsync();
             TestAssert.Equal(HttpStatusCode.OK, restart.StatusCode, answer);
-            TestAssert.True(answer.Contains("Amberline is restarting", StringComparison.Ordinal) && answer.Contains("http-equiv=refresh", StringComparison.Ordinal),
+            TestAssert.True(answer.Contains($"{HostPages.Product} is restarting", StringComparison.Ordinal) && answer.Contains("http-equiv=refresh", StringComparison.Ordinal),
                 "the page comes back by itself: " + answer);
         }
         TestAssert.True(await run.WaitAsync(TimeSpan.FromSeconds(30)), "a confirmed restart asks the loop for the next start");
@@ -690,7 +691,7 @@ public static class HostDashboardChecks
         {
             var answer = await stop.Content.ReadAsStringAsync();
             TestAssert.Equal(HttpStatusCode.OK, stop.StatusCode, answer);
-            TestAssert.True(answer.Contains("<h1>Amberline has stopped</h1><p>To start it again, double-click Amberline on your desktop.</p>",
+            TestAssert.True(answer.Contains($"<h1>{HostPages.Product} has stopped</h1><p>To start it again, double-click {HostPages.Product} on your desktop.</p>",
                 StringComparison.Ordinal), answer);
         }
         TestAssert.False(await run.WaitAsync(TimeSpan.FromSeconds(30)), "a confirmed stop leaves the loop");

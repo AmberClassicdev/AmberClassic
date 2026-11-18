@@ -75,8 +75,8 @@ public static class HostPagesChecks
             await home.SignInAsync(browser);
 
             var dashboard = await browser.GetStringAsync(HostDashboard.PagePath);
-            TestAssert.True(dashboard.Contains("<header><p class=wordmark>Amberline</p></header>", StringComparison.Ordinal) &&
-                dashboard.Contains("<div class=frame><nav class=side aria-label=\"Amberline\"><p class=server><span class=light aria-hidden=true></span>Test Server</p>", StringComparison.Ordinal) &&
+            TestAssert.True(dashboard.Contains($"<header><p class=wordmark>{HostPages.Product}</p></header>", StringComparison.Ordinal) &&
+                dashboard.Contains($"<div class=frame><nav class=side aria-label=\"{HostPages.Product}\"><p class=server><span class=light aria-hidden=true></span>Test Server</p>", StringComparison.Ordinal) &&
                 dashboard.Contains("<a href=/host aria-current=page>Dashboard</a>", StringComparison.Ordinal) &&
                 dashboard.Contains("<main id=main tabindex=-1 class=page>", StringComparison.Ordinal), "the Dashboard's shell is layout C: " + dashboard);
             TestAssert.True(dashboard.Contains("<a href=/host/updates>Updates</a>", StringComparison.Ordinal), "no newer release, no badge: " + dashboard);
@@ -87,6 +87,12 @@ public static class HostPagesChecks
             var badged = await browser.GetStringAsync(HostDashboard.PagePath);
             TestAssert.True(badged.Contains("<a href=/host/updates>Updates <span class=badge>1<span class=vh> update available</span></span></a>", StringComparison.Ordinal),
                 "a newer release shows the badge on Updates: " + badged);
+            // Batch 867: Updates with the release's notes in Markdown, rendered (headings under the release's h2, a list, a link), meets the pages' bar.
+            File.WriteAllText(HostUpdates.StateFile(home.Loop.Paths.Data),
+                "{\"latest\":\"9.9.9\",\"notes\":\"# Amberline 9.9.9\\n\\n## What changed\\n\\n- **Faster** games, see [the notes](https://github.com/Amberline-Dev/Project-Amberline/releases)\"}");
+            var updates = await PageAsync(browser, HttpMethod.Get, "/host/updates", HttpStatusCode.OK, HostDashboard.Policy);
+            TestAssert.True(updates.Contains("<h3>What changed</h3><ul><li><strong>Faster</strong> games, see <a href=", StringComparison.Ordinal),
+                "the notes are rendered: " + updates);
 
             // A first-run step (step 4, the address): the frame without a sidebar, and the step's indicator inside it.
             var address = await browser.GetStringAsync("/host/setup/address");
@@ -125,10 +131,11 @@ public static class HostPagesChecks
             using var browser = home.Client();
             using var stranger = home.Client();
             await WaitForHealthAsync(browser, "setup", run);
+            ConsoleLogOnly(home.Loop, "setup mode");
 
             // A browser without the host's session: the gate's page is bare (no server name, no nav), and the stylesheet is refused.
             var refused = await PageAsync(stranger, HttpMethod.Get, HostSteps.NamePath, HttpStatusCode.Forbidden, HostPages.Policy);
-            TestAssert.True(refused.Contains("<p class=wordmark>Amberline</p>", StringComparison.Ordinal) && !refused.Contains("<nav", StringComparison.Ordinal),
+            TestAssert.True(refused.Contains($"<p class=wordmark>{HostPages.Product}</p>", StringComparison.Ordinal) && !refused.Contains("<nav", StringComparison.Ordinal),
                 "the refusal page names no server and has no nav: " + refused);
             using (var sheet = await stranger.GetAsync(HostPages.StylePath))
                 TestAssert.Equal(HttpStatusCode.Forbidden, sheet.StatusCode, "the stylesheet is a host route");
@@ -151,14 +158,46 @@ public static class HostPagesChecks
             // Batch 643, seen in a browser: the start's problem (no folders saved yet) went on standing once both rows were found.
             var found = Step(await FormAsync(browser, "/setup", HttpStatusCode.OK, HostPages.Policy, ("game", home.Game), ("air", home.Air), ("paste", home.Game)), 2);
             TestAssert.True(Regex.Matches(found, "<span class=ok>").Count == 2 && !found.Contains("class=error-summary", StringComparison.Ordinal) &&
-                found.Contains("<title>Your game files · Amberline</title>", StringComparison.Ordinal), "both folders found: no problem stands: " + found);
+                found.Contains($"<title>Your game files · {HostPages.Product}</title>", StringComparison.Ordinal), "both folders found: no problem stands: " + found);
             await PageAsync(browser, HttpMethod.Get, HostInstall.StopPath, HttpStatusCode.OK, HostPages.Policy);
 
-            // The folders start the full Platform (in this process: the check's loop has no next process).
-            await FormAsync(browser, "/setup", HttpStatusCode.OK, HostPages.Policy, ("game", home.Game), ("air", home.Air));
+            // The folders start the full Platform (in this process: the check's loop has no next process). Batch 867: the restarting page
+            // goes back once the new process answers (page.js asks /health, which its script policy allows); the 5-second refresh, which landed
+            // on the browser's "can't be reached" page while the new process started (batch 863), is only for a browser without scripts.
+            var restarting = await FormAsync(browser, "/setup", HttpStatusCode.OK, HostDashboard.Policy, ("game", home.Game), ("air", home.Air));
+            var reopen = Regex.Match(restarting, "<body data-reopen=\"(/open\\?c=[^\"]+)\">");
+            TestAssert.True(reopen.Success && restarting.Contains($"<noscript><meta http-equiv=refresh content=\"5;url={WebUtility.HtmlDecode(reopen.Groups[1].Value)}\"></noscript>",
+                StringComparison.Ordinal) && restarting.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal),
+                "the restarting page comes back by itself once Amberline answers: " + restarting);
             await WaitForStartsAsync(home.Loop, 2, run);
             await WaitForHealthAsync(browser, "ready", run);
+            ConsoleLogOnly(home.Loop, "the full Platform");
             await StylesheetAsync(browser, HostDashboard.Policy);
+            // Batch 867: the script the restarting page runs is the one the browser kept (the stopping process may not answer for it), and it goes
+            // back only after a /health try the old process did not answer (or 30 seconds on).
+            using (var kept = await browser.GetAsync(HostPages.ScriptHref))
+            {
+                var code = await kept.Content.ReadAsStringAsync();
+                TestAssert.True(kept.Headers.CacheControl is { Private: true, MaxAge.TotalDays: >= 1 } && Regex.IsMatch(HostPages.ScriptHref, @"\?v=[0-9a-f]{12}\z") &&
+                    code.Contains("const reopen = document.body.dataset.reopen;", StringComparison.Ordinal) &&
+                    code.Contains("await fetch('/health', { cache: 'no-store' });", StringComparison.Ordinal) &&
+                    code.Contains("if (down || Date.now() - since > 30000) { location.replace(reopen); return; }", StringComparison.Ordinal),
+                    $"page.js is kept under a versioned address and goes back once /health answers after a miss: {kept.Headers.CacheControl}\n{code}");
+            }
+
+            // Batch 867: the full Platform's gate refusals have the host pages' policy, so the browser loads their stylesheet; before, they kept
+            // the Platform's inline-only policy and Chromium refused it (batch 863: another website's form, an expired link, no session).
+            using (var crossSite = new HttpRequestMessage(HttpMethod.Post, HostDashboard.PagePath + "/network") { Content = new FormUrlEncodedContent([]) })
+            {
+                crossSite.Headers.TryAddWithoutValidation("Origin", "http://attacker.example");
+                using var answer = await browser.SendAsync(crossSite);
+                var crossRefused = await CheckedAsync(answer, "another website's POST", HttpStatusCode.Forbidden, HostPages.Policy);
+                TestAssert.True(crossRefused.Contains($"<link rel=stylesheet href=\"{HostPages.StyleHref}\">", StringComparison.Ordinal),
+                    "the refusal links the stylesheet: " + crossRefused);
+            }
+            await PageAsync(stranger, HttpMethod.Get, "/open?c=" + home.Loop.Sessions.Code(DateTimeOffset.UtcNow - HostSessions.CodeLifetime - TimeSpan.FromSeconds(1)),
+                HttpStatusCode.Forbidden, HostPages.Policy);
+            await PageAsync(stranger, HttpMethod.Get, HostDashboard.PagePath, HttpStatusCode.Forbidden, HostPages.Policy);
 
             // The full Platform's steps: the login (form, error, done) and the address (form, error).
             Step(await PageAsync(browser, HttpMethod.Get, "/host/setup/login", HttpStatusCode.OK, HostDashboard.Policy), 3);
@@ -253,7 +292,7 @@ public static class HostPagesChecks
             // Batch 646: Advanced never reloads itself; page.js updates its Online now table from its JSON, under the host pages' policy.
             var advanced = Nav(await PageAsync(browser, HttpMethod.Get, "/manage", HttpStatusCode.OK, HostDashboard.Policy), "Advanced");
             TestAssert.True(!advanced.Contains("http-equiv=refresh", StringComparison.Ordinal) && advanced.Contains("<table id=online-table data-live", StringComparison.Ordinal) &&
-                advanced.Contains("<p id=online-count aria-live=polite>", StringComparison.Ordinal) && advanced.Contains("<script src=/host/page.js defer></script>", StringComparison.Ordinal),
+                advanced.Contains("<p id=online-count aria-live=polite>", StringComparison.Ordinal) && advanced.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal),
                 "Advanced updates its table in place: " + advanced);
             Nav(await PageAsync(browser, HttpMethod.Get, "/manage?refresh=off", HttpStatusCode.OK, HostDashboard.Policy), "Advanced");
             using (var online = await browser.GetAsync("/manage/online.json"))
@@ -386,7 +425,7 @@ public static class HostPagesChecks
             .Contains("<p class=notice role=status>The RP is given.</p>", StringComparison.Ordinal), "the done notice");
         var code = await FormAsync(browser, "/manage/reward-code/create", HttpStatusCode.OK, Policy, Manage, ("ip", "0"), ("rp", "100"), ("requestId", Guid.NewGuid().ToString()));
         TestAssert.True(code.Contains("<button type=button data-copy=reward-code>Copy</button> <span id=copy-status role=status></span>", StringComparison.Ordinal) &&
-            code.Contains("<script src=/host/page.js defer></script>", StringComparison.Ordinal), "the code has its Copy button: " + code);
+            code.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal), "the code has its Copy button: " + code);
         TestAssert.True(Advanced(await PageAsync(browser, HttpMethod.Get, Manage, HttpStatusCode.OK, Policy))
             .Contains("<div class=wide role=region tabindex=0 aria-labelledby=codes-heading><table><thead><tr><th scope=col>Status</th>", StringComparison.Ordinal) &&
             advanced.Contains("<div class=wide role=region tabindex=0 aria-labelledby=leavers-heading><table>", StringComparison.Ordinal),
@@ -509,7 +548,7 @@ public static class HostPagesChecks
         var heading = Regex.Match(page, "<h1[^>]*>(.*?)</h1>", RegexOptions.Singleline);
         Is(Count("title") == 1 && Count("h1") == 1, "one title and one h1");
         Is(title.Success && title.Groups[1].Value.Contains(Regex.Replace(heading.Groups[1].Value, "<[^>]+>", ""), StringComparison.Ordinal) &&
-            title.Groups[1].Value.EndsWith(" · Amberline", StringComparison.Ordinal), "the title names the page");
+            title.Groups[1].Value.EndsWith(" · " + HostPages.Product, StringComparison.Ordinal), "the title names the page");
         var levels = tags.Where(tag => tag.Name is ['h', >= '1' and <= '6']).Select(tag => tag.Name[1] - '0').ToArray();
         Is(levels[0] == 1 && levels.Zip(levels.Skip(1)).All(pair => pair.Second <= pair.First + 1), "headings in order: " + string.Join(",", levels));
 
@@ -577,7 +616,7 @@ public static class HostPagesChecks
             if (Attribute(form.Groups[1].Value, "method") == "post" && Attribute(form.Groups[1].Value, "action") is { } action && Slow.Any(slow => Regex.IsMatch(action, slow)))
                 Is(Attribute(form.Groups[1].Value, "data-wait") is { Length: > 0 } || Regex.IsMatch(form.Groups[2].Value, "<button[^>]*\\sdata-wait=\"[^\"]+\""),
                     $"the slow form to {action} says what it is doing (data-wait)");
-        Is(!page.Contains("data-wait=", StringComparison.Ordinal) || page.Contains($"<script src={HostPages.ScriptPath} defer></script>", StringComparison.Ordinal),
+        Is(!page.Contains("data-wait=", StringComparison.Ordinal) || page.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal),
             "a page with data-wait loads page.js");
         // Batch 648: Advanced's Leavers and reward-code tables had a header cell without a name.
         Is(!Regex.IsMatch(page, "<th(\\s[^>]*)?>\\s*</th>"), "every header cell names its column");
@@ -707,7 +746,7 @@ public static class HostPagesChecks
     /// <summary>A full-Platform page: the nav names it as the current page, once.</summary>
     private static string Nav(string page, string current)
     {
-        TestAssert.True(page.Contains("<nav class=side aria-label=\"Amberline\">", StringComparison.Ordinal) && Regex.Count(page, "aria-current=page") == 1 &&
+        TestAssert.True(page.Contains($"<nav class=side aria-label=\"{HostPages.Product}\">", StringComparison.Ordinal) && Regex.Count(page, "aria-current=page") == 1 &&
             Regex.IsMatch(page, $"aria-current=page>{current}</a>"), $"the nav marks {current}: {page}");
         return page;
     }

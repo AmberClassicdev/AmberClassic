@@ -15,7 +15,7 @@ namespace Amberline.Tests.Air;
 /// </summary>
 public static class HostSessionChecks
 {
-    private const string FromIcon = "Open Amberline from its desktop icon";
+    private const string FromIcon = $"Open {HostPages.Product} from its desktop icon";
     private const string Expired = "This link has expired";
 
     [Check("server.host-launch-code-session", TimeoutSeconds = 120)]

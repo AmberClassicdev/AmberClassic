@@ -143,8 +143,20 @@ internal static class ClientZip
         return new(game, air, One(Holders(names, "LoLLauncher.exe"), "2011 launcher", required: false));
     }
 
-    /// <summary>Removes a staging folder of this code's (one with its marker, or an empty one); a folder of that name that is not ours is left alone. False when it stays.</summary>
-    internal static bool Remove(string staging) => !Directory.Exists(staging) || (Ours(staging) && FolderMove.TryDeleteTree(staging));
+    /// <summary>
+    /// Removes a staging folder of this code's (one with its marker, or an empty one); a folder of that name that is not ours is left alone. False when it
+    /// stays. Batch 857 review (D): a link, or a folder of another Windows account (InstallLock.Refusal), is never deleted: it stays, and the log says why.
+    /// </summary>
+    internal static bool Remove(string staging)
+    {
+        if (!Directory.Exists(staging)) return true;
+        if (InstallLock.Refusal(staging) is { } refused)
+        {
+            Console.Error.WriteLine($"Client zip: {refused}, so it is not removed.");
+            return false;
+        }
+        return Ours(staging) && FolderMove.TryDeleteTree(staging);
+    }
 
     private static ZipArchive Open(string zip)
     {
@@ -197,12 +209,18 @@ internal static class ClientZip
     {
         if (Directory.Exists(staging))
         {
+            // Batch 857 review (D): a link or a folder of another Windows account is never deleted (InstallLock.Refusal): the unpack refuses and names it.
+            if (InstallLock.Refusal(staging) is { } refused)
+                throw new InstallRefusedException($"{refused}, and Amberline unpacks the client zip there. Move or rename that folder, then try again.");
             if ((File.GetAttributes(staging) & FileAttributes.ReparsePoint) != 0 || !Ours(staging))
                 throw new InstallRefusedException($"A folder named {staging} is in the way: Amberline unpacks the client zip there. Move or rename that folder, then try again.");
             if (!FolderMove.TryDeleteTree(staging))
                 throw new InstallRefusedException($"The folder {staging}, left from an earlier unpack, could not be removed: a program may have a file in it open. Close it, then try again.");
         }
-        Directory.CreateDirectory(staging);
+        // NOT RETAIL (batch 857; review HIGH 1, MEDIUM 4): made with the lock already set, checked on the folder itself (another account may have made
+        // it meanwhile) and locked as the install is before anything is unpacked into it (InstallLock.Prepare). A link, another account's folder or one
+        // that could not be locked refuses the unpack; a volume without permissions only goes to the log.
+        if (InstallLock.Prepare(staging, null, [Marker]) is { } notLocked) Console.Error.WriteLine($"Client zip: {notLocked}.");
         File.WriteAllText(Path.Combine(staging, Marker), "Amberline unpacks the client zip here while it installs, and removes this folder afterwards.\r\n");
     }
 

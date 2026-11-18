@@ -546,7 +546,7 @@ internal static class PlayerInstallWindow
                 finished = await Task.Run(async () =>
                 {
                     using var client = PlayerDownload.Client(connection, out var origin);
-                    await PlayerDownload.DownloadAsync(client, origin, offered, chosen, pins, name, report, source.Token);
+                    await PlayerDownload.DownloadAsync(client, origin, offered, chosen, pins, name, profile.LocalAppData, report, source.Token);
                     return PlayerInstall.Install(profile, chosen, connection, name, tool, report);
                 });
             }
@@ -817,6 +817,9 @@ internal static class PlayerInstallWindow
         /// </summary>
         private static string DefaultInstall(PlayerProfile profile, string? game)
         {
+            // DIAGNOSTICS (batch 857): a check's profile (no registry: never the real one) never defaults to a real drive's root folder, such as a
+            // player's own D:\Amberline: its install defaults into its own throwaway profile.
+            if (!profile.WritesRegistry) return Path.Combine(profile.LocalAppData, "Programs", FolderMove.HostName);
             var system = Path.GetPathRoot(Environment.SystemDirectory);
             return game is not null && Path.GetPathRoot(game) is { Length: > 0 } root && !string.Equals(root, system, StringComparison.OrdinalIgnoreCase)
                 ? Path.Combine(root, FolderMove.HostName)

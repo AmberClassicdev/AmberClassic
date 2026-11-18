@@ -138,7 +138,7 @@ public static class HostGate
             if (!PlatformManagement.IsLocal(context, port)) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
             if (!SameOrigin(context.Request))
             {
-                await Refuse("Amberline refused this request",
+                await Refuse($"{HostPages.Product} refused this request",
                     "It came from another website. Use the page that Amberline opened for you.").ExecuteAsync(context);
                 return;
             }
@@ -159,7 +159,7 @@ public static class HostGate
                     return Refuse("This link has expired",
                         "Each link works once, for 2 minutes. Start Amberline again from its desktop icon.");
                 case HostCode.Foreign:
-                    return Refuse("This Amberline belongs to another Windows user on this PC",
+                    return Refuse($"This {HostPages.Product} belongs to another Windows user on this PC",
                         "Only the Windows user who started it can open its page. (A-RUN-02)");
                 default:
                     return OpenFromIcon;
@@ -167,9 +167,24 @@ public static class HostGate
         });
     }
 
-    private static readonly IResult OpenFromIcon = Refuse("Open Amberline from its desktop icon",
-        "For your safety, this page opens only through Amberline. Double-click the Amberline icon.");
+    private static readonly IResult OpenFromIcon = Refuse($"Open {HostPages.Product} from its desktop icon",
+        $"For your safety, this page opens only through Amberline. Double-click the {HostPages.Product} icon.");
 
     private static IResult Refuse(string title, string text) =>
-        HostMode.Page($"<h1>{title}</h1><p>{text}</p>", StatusCodes.Status403Forbidden);
+        new Refusal(HostMode.Page($"<h1>{title}</h1><p>{text}</p>", StatusCodes.Status403Forbidden));
+
+    /// <summary>
+    /// Batch 867: a refusal page has the host pages' policy (<see cref="HostPages.Policy"/>: the stylesheet from this origin). It is written
+    /// before a <c>/host</c> page's own policy applies, so in the full Platform it kept the Platform's inline-only policy and Chromium refused
+    /// the stylesheet (batch 863). The gate is unchanged: a browser without the session still gets no stylesheet from it, but one that has
+    /// opened the page before keeps the sheet (<see cref="HostPages.StyleHref"/>).
+    /// </summary>
+    private sealed class Refusal(IResult page) : IResult
+    {
+        public Task ExecuteAsync(HttpContext context)
+        {
+            context.Response.Headers.ContentSecurityPolicy = HostPages.Policy;
+            return page.ExecuteAsync(context);
+        }
+    }
 }

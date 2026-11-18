@@ -567,6 +567,9 @@ public sealed class HostDashboard : IAsyncDisposable
         // NOT RETAIL (batch 856): while the host guides old 1.0.0.126 shortcuts here, one line says whether they are (design Part 2, step 6). It is
         // never "bad": the headline, the network line and the firewall check stay as they were.
         if (_old?.Line() is { } guiding) Add("guiding", guiding.Running ? "ok" : "waiting", guiding.Text);
+        // NOT RETAIL (batch 857, design step 6): whether only this Windows account can change the install (HostLoop.LockLine). A folder that could not
+        // be locked never stops the server and has nothing to do with players joining, so it is never "bad": the headline stays as it was.
+        if (_loop.LockLine is { } locked) Add("install", locked.Locked ? "ok" : "waiting", locked.Text);
 
         var checking = checks.Any(check => check.State == "checking");
         var open = checks.Where(check => !hiddenChecks.Contains(check.Id)).ToArray();
@@ -674,7 +677,7 @@ public sealed class HostDashboard : IAsyncDisposable
             : $"{Count(games.Count, "game")} {(games.Count == 1 ? "is" : "are")} running ({Count(games.Sum(game => game.Players), "player")}). " +
               $"{(restart ? "Restarting" : "Stopping")} ends {(games.Count == 1 ? "it" : "them")} for everyone.";
         var wait = HostPages.Wait(restart ? "Restarting Amberline. This takes a few seconds." : "Stopping Amberline.");
-        return HostMode.Page($"<h1>{verb} Amberline?</h1>" + (note is null ? "" : $"<p class=problem role=alert>{note}</p>") + $"<p>{warning}</p>" +
+        return HostMode.Page($"<h1>{verb} {HostPages.Product}?</h1>" + (note is null ? "" : $"<p class=problem role=alert>{note}</p>") + $"<p>{warning}</p>" +
             $"<form method=post action={PagePath}/{verb.ToLowerInvariant()}{wait}>{Program.RegistrationToken(context, antiforgery)}" +
             $"<input type=hidden name=games value={games.Count}><div class=buttons><button type=submit>{verb} Amberline</button> " +
             $"<a class=\"button secondary\" href={PagePath}>Cancel</a></div></form>", status);
@@ -699,9 +702,13 @@ public sealed class HostDashboard : IAsyncDisposable
             return Task.CompletedTask;
         });
         return restart
-            ? HostMode.Page("<h1>Amberline is restarting</h1><p>This page comes back by itself.</p>", refresh: _loop.ReopenPath, nav: false)
-            : HostMode.Page("<h1>Amberline has stopped</h1><p>To start it again, double-click Amberline on your desktop.</p>", nav: false);
+            ? HostPages.Restarting($"<h1>{HostPages.Product} is restarting</h1><p>This page comes back by itself.</p>", _loop.ReopenPath)
+            : HostMode.Page(Stopped, nav: false);
     }
+
+    /// <summary>The page after Stop (setup mode's too, <see cref="HostInstall.MapSetupStop"/>): batch 867, it names the desktop icon as it is called.</summary>
+    internal const string Stopped =
+        $"<h1>{HostPages.Product} has stopped</h1><p>To start it again, double-click {HostPages.Product} on your desktop.</p>";
 
     private static readonly IResult Expired = HostMode.Page(
         $"<h1>The page expired</h1><p><a href={PagePath}>Open the dashboard</a> and try again.</p>", StatusCodes.Status400BadRequest);

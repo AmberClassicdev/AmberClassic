@@ -277,6 +277,13 @@ public static class HostUninstall
         else done.Add("Amberline's rules in Windows Firewall are removed.");
     }
 
+    /// <summary>
+    /// Batch 867: whether Windows Firewall holds a rule of Amberline's (<see cref="HostFirewall.RemoveCommand"/>, what the uninstall removes), so
+    /// the page names the rules only then. No network to ask, or rules it cannot read: false (the uninstall still tries, and says what is left).
+    /// </summary>
+    public static async Task<bool> FirewallRulesAsync(HostNetwork? network, CancellationToken cancel) =>
+        network is not null && await ReadRulesAsync(network, cancel) is { } shown && HostFirewall.RemoveCommand(shown, Environment.SystemDirectory) is not null;
+
     private static async Task<IReadOnlyList<ShownRule>?> ReadRulesAsync(HostNetwork network, CancellationToken cancel)
     {
         try { return await network.ReadFirewall(cancel); }

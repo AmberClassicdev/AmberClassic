@@ -177,6 +177,49 @@ public static class BehaviorTreeWaveChecks
         TestAssert.True(failures.Count == 0, $"the wave's Lua AI runs with no script failure ({failures.Count} failure(s))");
     }
 
+    /// <summary>
+    /// Batch 868: the host plans its wave lanes while it is composed (BehaviorTreeQuestHost.PlanWaveLanes), so the first release runs no A* on the
+    /// grid inside its step, and each lane's first squad is installed the route it planned before (OdinWaves.Route from where it stands).
+    /// </summary>
+    [Check("scripting.behaviour-tree-map8-wave-lanes-planned-before-the-release")]
+    public static void MapEightWaveLanesArePlannedBeforeTheRelease()
+    {
+        var paths = GameDataPaths.Default.ForMap(GameMaps.CrystalScar);
+        var grid = NavigationGrid.Load(paths);
+        var world = new WorldState();
+        var movement = new MovementSystem(world, grid);
+        var ai = new MinionAiSystem(world, grid, movement, new WaveCombat(), new WavePackets(), new WaveVision());
+        var spawned = new List<Entity>();
+        var host = BehaviorTreeQuestHost.ForMap(GameMaps.CrystalScar, paths, world, null, null,
+            (skin, at, team) => TestSpawn(world, spawned, skin, at, team, UnitType.Monster),
+            hooks: new CapturePointHooks(Kill: (_, _) => { }),
+            spawnMinion: (skin, at, team) => TestSpawn(world, spawned, skin, at, team, UnitType.Minion),
+            navigation: grid, minions: ai)
+        ?? throw new InvalidOperationException("map 8 has a quest host");
+        var planned = grid.FindPathCalls;
+        TestAssert.True(planned > 0, "the host plans its lanes when it is composed");
+
+        host.Tick(Step, Step);
+        Hold(host, 0, Team.Order);
+        Hold(host, 4, Team.Chaos);
+        for (var tick = 2; tick <= (int)(27.0 / Step); tick++) host.Tick(tick * Step, Step);
+        TestAssert.Equal(planned, grid.FindPathCalls, "the first release plans nothing on the grid");
+
+        var lanes = host.Context.Encounters ?? throw new InvalidOperationException("map 8 has an encounter service");
+        var firsts = spawned.Where(unit => lanes.LaneOf(unit) is not null).GroupBy(unit => lanes.LaneOf(unit)).Select(lane => lane.First()).ToList();
+        TestAssert.Equal(4, firsts.Count, "four lanes released: A1, A2, E1 and E2");
+        var bounds = new NavigationBounds(grid.MinX, grid.MaxX, grid.MinZ, grid.MaxZ);
+        foreach (var unit in firsts)
+        {
+            var lane = lanes.LaneOf(unit)!;
+            var fresh = new Entity(world.Allocate(UnitType.Minion), EntityKind.Minion, UnitType.Minion, unit.Team, unit.Position);
+            MovementSystem.InstallPath(fresh, OdinWaves.Route(host.Context.NamedLocation, lane.Lane, lane.Reverse, unit.Position, grid), bounds);
+            TestAssert.True(unit.Waypoints.Count > 1 && unit.Waypoints.SequenceEqual(fresh.Waypoints),
+                $"lane {lane.Lane}{(lane.Reverse ? " backward" : "")}: the first squad walks the route planned from its marker " +
+                $"({unit.Waypoints.Count} against {fresh.Waypoints.Count} points)");
+        }
+    }
+
     private static double Distance(Position2 a, Position2 b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Z - b.Z) * (a.Z - b.Z));
 
     /// <summary>The combat seam of the lane AI for a wave check: a live target in range attacks; no windup is pending.</summary>

@@ -150,9 +150,15 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
         {
             if (File.Exists(target) || (Directory.Exists(target) && !File.Exists(Path.Combine(target, ClientZip.Marker))))
                 return (null, $"{target} holds other files, so Amberline did not put the client zip's 2011 launcher there; " + Stays);
+            // Batch 857 review (LOW 9): at the client zip's time, a folder of that name owned by another account (or a link) is never replaced.
+            if (InstallLock.Refusal(target) is { } foreign)
+                return (null, $"{foreign}, so Amberline did not put the client zip's 2011 launcher there; " + Stays);
             File.WriteAllText(Path.Combine(staged, ClientZip.Marker), "Amberline put the 2011 launcher from the client zip here; it replaces this folder only while this file is in it.\r\n");
             if (Directory.Exists(target) && !FolderMove.TryDeleteTree(target)) throw new IOException($"{target}, made from an earlier client zip, could not be replaced.");
             Directory.Move(staged, target);
+            // NOT RETAIL (batch 857, review MEDIUM 4): the folder beside the install is locked as the install is (InstallLock.Prepare). A link or
+            // another account's folder there refuses it (the setting stays as it is); a volume without permissions only goes to the log.
+            if (InstallLock.Prepare(target, null, [ClientZip.Marker]) is { } notLocked) Console.Error.WriteLine($"Client zip, 2011 launcher: {notLocked}.");
             if (!LauncherWorks(target, launcherSha256))
             {
                 Console.Error.WriteLine($"Client zip, 2011 launcher: {HostFolders.Check(FolderKind.Launcher, target, new FolderSetup { LauncherSha256 = launcherSha256 }).Problem}");
@@ -161,6 +167,11 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
             }
             HostMode.Change(settings, saved => saved with { LauncherRoot = target });
             return (target, $"The client zip's 2011 launcher is in {target}, beside the install folder.");
+        }
+        catch (InstallRefusedException refused)
+        {
+            Console.Error.WriteLine($"Client zip, 2011 launcher: {refused.Message}");
+            return (null, "The client zip's 2011 launcher could not be locked beside the install folder, so " + Stays);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -171,11 +182,17 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
 
     /// <summary>
     /// After the moves: the lines for the host (originals that could not be removed, what stayed in an AIR folder that holds other
-    /// things, the notes), the AIR client's emptied folder removed, and <paramref name="settings"/> naming the folders inside.
+    /// things, the notes), the AIR client's emptied folder removed, and <paramref name="paths"/>' settings naming the folders inside.
+    /// NOT RETAIL (batch 857): each folder moved in first takes the install's lock (a move on one drive keeps the old permissions), and the
+    /// lock's record goes, so the next start checks the whole install (<see cref="InstallLock.Restamp"/>).
     /// </summary>
-    public IReadOnlyList<string> Finish(IReadOnlyList<string> leftovers, string settings)
+    public IReadOnlyList<string> Finish(IReadOnlyList<string> leftovers, HostPaths paths)
     {
+        var settings = paths.Settings;
         var lines = leftovers.Select(leftover => $"Amberline could not delete {leftover}. You can delete it yourself.").ToList();
+        foreach (var move in Moves)
+            if (InstallLock.Restamp(move.Target, paths.LockRecord) is { } notLocked)
+                lines.Add($"Other Windows accounts on this PC may be able to change the {move.Label} in the install: {notLocked}.");
         // An AIR client folder that held other things (the first friend's: the game and the Amberline download too) keeps them.
         foreach (var move in Moves.Where(move => Delete && move.Entries is not null))
             if (FolderMove.Others(move) is { Count: > 0 } others)
@@ -191,9 +208,10 @@ internal sealed record ClientPlan(IReadOnlyList<FolderMove.Move> Moves, IReadOnl
 
 /// <summary>
 /// The folders an install folder must stay out of: OneDrive's (they sync every file) and Program Files (it needs administrator
-/// rights, and Amberline needs none). DIAGNOSTICS: checks pass synthetic ones.
+/// rights, and Amberline needs none). DIAGNOSTICS: checks pass synthetic ones, and batch 857's <paramref name="Account"/>, a SID that stands in
+/// for this Windows user in the install lock (<see cref="InstallLock"/>), so a check meets a folder of another account without one.
 /// </summary>
-public sealed record InstallRules(IReadOnlyList<string> OneDrive, IReadOnlyList<string> ProgramFiles)
+public sealed record InstallRules(IReadOnlyList<string> OneDrive, IReadOnlyList<string> ProgramFiles, string? Account = null)
 {
     public static InstallRules ThisPc() => new(
         new[] { "OneDrive", "OneDriveConsumer", "OneDriveCommercial" }.Select(Environment.GetEnvironmentVariable).OfType<string>().Where(Path.IsPathFullyQualified).ToList(),
@@ -348,9 +366,34 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
         }
         foreach (var (source, label) in new[] { (clients?.Game, "game"), (clients?.Air, "AIR client") })
             if (source is not null && FolderMove.Inside(full, source)) return $"That folder is inside your {label} folder." + other;
+        // NOT RETAIL (batch 857): any Windows user may make C:\Amberline first, so a folder of another account (or a link) is refused, and, for a new
+        // install only (review LOW 9: an update never stops on them), the two folders beside it: the client zip's 2011 launcher and its staging
+        // folder (InstallLock.Refusal). The client zip itself checks both again when it uses them (ClientZip, ClientPlan.PlaceZipLauncher).
+        var update = File.Exists(Path.Combine(full, FolderMove.InstallMarker));
+        foreach (var path in update ? new[] { full } : new[] { full, ClientPlan.LauncherBeside(full), ClientZip.StagingFor(full) })
+            if (InstallLock.Refusal(path, rules.Account) is { } refused) return $"{refused}." + other;
         if (Directory.Exists(full) && !File.Exists(Path.Combine(full, FolderMove.InstallMarker)) && Directory.EnumerateFileSystemEntries(full).Any())
             return "That folder holds other files. Choose a new or empty folder.";
         return null;
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 857; review HIGH 1, MEDIUM 4): a new install folder (no marker yet) goes through the install lock's shared first step
+    /// (<see cref="InstallLock.Prepare"/>) before anything is written in it: made with the lock already set, checked on the folder itself and locked.
+    /// The start calls this before it opens <c>data\logs</c>, and <see cref="RunAsync"/> again. An install that has its marker is locked by its own
+    /// start instead. A link, another account's folder or one that could not be locked is a refusal, returned (nothing is installed); a volume without
+    /// permissions is only said in the window. Null otherwise.
+    /// </summary>
+    public string? LockNew()
+    {
+        if (Folder is not { } folder || File.Exists(Path.Combine(folder, FolderMove.InstallMarker))) return null;
+        try
+        {
+            if (InstallLock.Prepare(folder, localAppData, [FolderMove.InstallMarker], Rules.Account) is { } notLocked)
+                screen.WriteLine($"Other Windows accounts on this PC may be able to change {folder}: {notLocked}.");
+            return null;
+        }
+        catch (InstallRefusedException refused) { return refused.Message; }
     }
 
     /// <summary>Installs, updates or starts the installed Amberline; the exit code of the window (0 started, 1 nothing done, 2 failed).</summary>
@@ -360,6 +403,11 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
         if (Folder != _checked && Check() is { } refused)
         {
             screen.WriteLine(refused);
+            return 2;
+        }
+        if (LockNew() is { } foreign)
+        {
+            screen.WriteLine(foreign);
             return 2;
         }
         var had = Directory.Exists(App);
@@ -409,6 +457,10 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
                 await MoveAsync(App, Previous);
             }
             await MoveAsync(Staging, App);
+            // NOT RETAIL (batch 857): the swapped-in program takes the install's lock, and the next start checks the whole install. Review LOW 8: an
+            // install from before batch 857 is not locked yet (its own start locks it and says so on Status), so this only goes to the log.
+            if (Folder is not null && InstallLock.Restamp(App, Target.LockRecord) is { } notLocked)
+                Console.Error.WriteLine($"Install, app: {notLocked}.");
             CreateShortcut();
             screen.WriteLine($"Amberline {offered} is installed in {where}, and its icon is on your desktop. You can delete the zip and the unzipped folder.");
             if (await StartInstalledAsync()) return 0;
@@ -533,7 +585,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
                     : $"Moving the game and the AIR client into {folder}.");
                 leftovers = FolderMove.Execute(plan.Moves, plan.Delete, new Lines(screen), new(SameDrive));
             }
-            foreach (var line in plan.Finish(leftovers, Target.Settings)) screen.WriteLine(line);
+            foreach (var line in plan.Finish(leftovers, Target)) screen.WriteLine(line);
             if (ClientPlan.PlaceZipLauncher(zipLauncher, folder, LauncherSha256, Target.Settings).Note is { } note) screen.WriteLine(note);
             return null;
         }
@@ -625,7 +677,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
     public static void MapSetupStop(WebApplication app, HostLoop loop)
     {
         app.MapGet(StopPath, (HttpContext context, IAntiforgery antiforgery) => HostMode.Page(
-            "<h1>Stop Amberline?</h1><p>Users cannot log in until you start Amberline again.</p>" +
+            $"<h1>Stop {HostPages.Product}?</h1><p>Users cannot log in until you start Amberline again.</p>" +
             $"<form method=post action={StopPath}{HostPages.Wait("Stopping Amberline.")}>{Program.RegistrationToken(context, antiforgery)}<input type=hidden name=games value=0>" +
             $"<div class=buttons><button type=submit>Stop Amberline</button> <a class=\"button secondary\" href={HostSteps.Start}>Cancel</a></div></form>"));
         app.MapPost(StopPath, async (HttpContext context, IAntiforgery antiforgery) =>
@@ -633,7 +685,7 @@ public sealed class HostInstall(HostPaths paths, string localAppData, string des
             if (!await antiforgery.IsRequestValidAsync(context))
                 return HostMode.Page($"<h1>The page expired</h1><p><a href={StopPath}>Choose again.</a></p>", StatusCodes.Status400BadRequest);
             context.Response.OnCompleted(() => { loop.Stop(); return Task.CompletedTask; });
-            return HostMode.Page("<h1>Amberline has stopped</h1><p>To start it again, double-click Amberline on your desktop.</p>");
+            return HostMode.Page(HostDashboard.Stopped);
         });
     }
 

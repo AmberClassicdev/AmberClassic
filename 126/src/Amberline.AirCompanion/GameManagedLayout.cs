@@ -32,9 +32,11 @@ internal static class GameManagedLayout
 
     /// <summary>
     /// Starts the check (and, when needed, the build) for <paramref name="gameDirectory"/> and returns at once. The task result is the log line, which
-    /// <paramref name="write"/> receives as well; it holds no path. The task never faults.
+    /// <paramref name="write"/> receives as well; it holds no path. The task never faults. <paramref name="notice"/> shows the player why a RADS root
+    /// is not used (<see cref="LockedRoot"/>), before this returns.
     /// </summary>
-    internal static Task<string> Start(string gameDirectory, Action<string> write, string? root = null, ManagedLayout.EnsureOptions? options = null, bool? gameRunning = null, Func<string>? shortNames = null)
+    internal static Task<string> Start(string gameDirectory, Action<string> write, string? root = null, ManagedLayout.EnsureOptions? options = null, bool? gameRunning = null, Func<string>? shortNames = null,
+        Action<string>? notice = null)
     {
         if (Environment.GetEnvironmentVariable(OffVariable) == "0")
         {
@@ -49,6 +51,10 @@ internal static class GameManagedLayout
             write(relative);
             return Task.FromResult(relative);
         }
+        // Batch 857 re-review 3: the root is settled here, before the start goes on, so the notice shows while the start window does (a later
+        // one would open that window again). A folder the client never manages takes no root.
+        var skipped = options?.DryRun != true && ManagedLayout.ParseGameDirectory(Path.GetFullPath(gameDirectory)) is not null
+            ? LockedRoot(Path.GetFullPath(root), notice) : null;
         // A game from an earlier session can outlive its companion and have the archives open: then a stale layout is only taken out of use.
         var running = gameRunning ?? System.Diagnostics.Process.GetProcessesByName("League of Legends").Length > 0;
         return Task.Factory.StartNew(() =>
@@ -56,7 +62,7 @@ internal static class GameManagedLayout
             Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
             string line;
             ManagedLayout.Result? result = null;
-            try { result = ManagedLayout.Ensure(gameDirectory, root, (options ?? BackgroundOptions()) with { GameRunning = running }); line = result.ToString(); }
+            try { result = ManagedLayout.Ensure(gameDirectory, root, (options ?? BackgroundOptions()) with { GameRunning = running, PrepareRoot = _ => skipped }); line = result.ToString(); }
             // A background step on someone else's machine must never take the companion down; Ensure already reports I/O problems as results.
             catch (Exception exception) { line = $"managed-layout: failed ({exception.GetType().Name})"; }
             write(line);
@@ -66,5 +72,24 @@ internal static class GameManagedLayout
                 write(NoShortNamesWarning);
             return line;
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// NOT RETAIL (batch 857 re-review 2, MEDIUM 2): the layout's root is the classic start's (c:\rads), so it takes the same rules
+    /// (<see cref="ClassicLauncherLayout.RootRefusal"/>): a root that is not there is made locked to this Windows user and marked; one that is there
+    /// is used only while it passes the classic start's checks. Else nothing is built or written there. A manifest an earlier layout left in that
+    /// root stays in use, though: the game reads the files it lists from that layout's archives, not from its own folder, until the folder is
+    /// deleted. So <paramref name="notice"/> tells the player why, with the classic start's own reason (which says to delete the folder), as the
+    /// classic start's fallback does. Null when the root may be used; else the log's reason, without a path.
+    /// </summary>
+    private static string? LockedRoot(string root, Action<string>? notice)
+    {
+        string? refused;
+        try { refused = ClassicLauncherLayout.RootRefusal(root, null); }
+        // It runs on the start's own path now, which it must never stop: any failure skips the layout.
+        catch (Exception exception) { refused = exception.Message; }
+        if (refused is null) return null;
+        notice?.Invoke($"The game's file layout was not updated: {refused.TrimEnd()}");
+        return "the RADS root is not locked to your Windows account; delete that folder, and the next start lays it out again, locked";
     }
 }

@@ -225,6 +225,23 @@ public static class ClassicLauncherChecks
             TestAssert.Equal<string?>(null, ClassicLauncherLayout.Ensure(new(root, launcher, moved, game, 8390), log.Add).Refusal, "a moved AIR folder is accepted");
             TestAssert.Equal<string?>(moved, new DirectoryInfo(airLink).LinkTarget, "the junction is re-pointed at the moved AIR folder");
 
+            // Batch 857 review (HIGH 3): a root Amberline made is marked and locked; a link its layout did not make stops the next full pass and
+            // refuses the classic start; a root that is a link is refused before anything is written.
+            TestAssert.True(File.Exists(Path.Combine(root, ClassicLauncherLayout.RootMarker)) && new DirectoryInfo(root).GetAccessControl().AreAccessRulesProtected,
+                "a root Amberline made is marked and locked");
+            var stray = Path.Combine(root, "stray");
+            HostLoginCopyChecks.Junction(stray, moved);
+            File.Delete(Path.Combine(root, ClassicLauncherLayout.RootLockRecord));
+            TestAssert.True(ClassicLauncherLayout.Ensure(new(root, launcher, moved, game, 8390), log.Add).Refusal is { } strayReason &&
+                strayReason.Contains(stray, StringComparison.Ordinal), "a link the layout did not make refuses the classic start");
+            Directory.Delete(stray);
+            TestAssert.Equal<string?>(null, ClassicLauncherLayout.Ensure(new(root, launcher, moved, game, 8390), log.Add).Refusal, "without it, accepted again");
+            var linkRoot = Path.Combine(temp, "link-rads");
+            HostLoginCopyChecks.Junction(linkRoot, moved);
+            TestAssert.True(ClassicLauncherLayout.Ensure(new(linkRoot, launcher, moved, game, 8390), log.Add).Refusal is { } linkReason &&
+                linkReason.Contains("is a link to another place", StringComparison.Ordinal), "a RADS root that is a link refuses the classic start");
+            Directory.Delete(linkRoot);
+
             // Not ours (a real old install, the spike's leftovers): a needed path, an unstamped system cfg, or a release folder beside ours (the
             // stand-in would report its higher version). Refused by name; nothing is created or changed anywhere.
             void RefusedFor(string name, string relative, bool folder)
@@ -233,8 +250,10 @@ public static class ClassicLauncherChecks
                 var path = Path.Combine(other, relative);
                 Directory.CreateDirectory(folder ? path : Path.GetDirectoryName(path)!);
                 File.WriteAllText(folder ? Path.Combine(path, "keep.txt") : path, "old install");
+                // Batch 857 review: a root Amberline did not make is used only while it is private (as a real one in the user's profile would be).
+                Amberline.AirCompanion.InstallLock.Lock(other);
                 var unchanged = Times(other);
-                var (refusedLayout, reason) = ClassicLauncherLayout.Ensure(new(other, launcher, moved, game, 8390), log.Add);
+                var (refusedLayout, reason) = ClassicLauncherLayout.Ensure(new(other, launcher, moved, game, 8390), log.Add, top: temp);
                 TestAssert.True(refusedLayout is null && reason is not null && reason.Contains(path, StringComparison.Ordinal), $"{relative} refuses the start by name: {reason}");
                 TestAssert.Equal(unchanged, Times(other), $"{relative}: a refused start leaves the root untouched");
             }
@@ -297,7 +316,8 @@ public static class ClassicLauncherChecks
             TestAssert.True(File.Exists(Path.Combine(moved, "LolClient.exe")) && File.Exists(Path.Combine(moved, "lol.properties")), "the AIR files behind the junction survive");
             TestAssert.True(File.Exists(Path.Combine(game, "League of Legends.exe")), "the game files behind the junction survive");
             string[] stays = [Path.Combine(root, "projects"), Path.Combine(root, @"projects\lol_game_client"), Path.Combine(root, @"projects\lol_game_client\releases"),
-                Path.Combine(root, @"projects\lol_game_client\releases\0.0.0.51"), gameLayout, Path.Combine(root, "rads_lol_launcher.log")];
+                Path.Combine(root, @"projects\lol_game_client\releases\0.0.0.51"), gameLayout, Path.Combine(root, "rads_lol_launcher.log"),
+                Path.Combine(root, ClassicLauncherLayout.RootMarker), Path.Combine(root, ClassicLauncherLayout.RootLockRecord)];   // batch 857: the root mark and record stay
             TestAssert.Equal(string.Join(",", stays.Order(StringComparer.Ordinal)), string.Join(",", Directory.GetFileSystemEntries(root, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal)),
                 "only the game's managed layout (in the shared projects folder) and the unstamped root log stay");
             foreach (var path in new[] { airLink, gameLink, Path.Combine(root, "system"), Path.Combine(root, "solutions"), Path.Combine(root, @"projects\lol_launcher"), Path.Combine(root, @"projects\lol_air_client_config_eune") })
@@ -385,7 +405,8 @@ public static class ClassicLauncherChecks
             TestAssert.True(removed.Contains(launcher) && removed.Contains(Path.Combine(root, @"projects\lol_launcher")), "the removal reports the launcher folder and the layout's launcher project");
             TestAssert.True(!Directory.Exists(airJunction) && new DirectoryInfo(airJunction).LinkTarget is null, "the AIR junction is gone");
             string[] stays = [Path.Combine(root, "projects"), Path.Combine(root, @"projects\lol_game_client"), Path.Combine(root, @"projects\lol_game_client\releases"),
-                Path.Combine(root, @"projects\lol_game_client\releases\0.0.0.51"), gameLayout, Path.Combine(root, "rads_lol_launcher.log")];
+                Path.Combine(root, @"projects\lol_game_client\releases\0.0.0.51"), gameLayout, Path.Combine(root, "rads_lol_launcher.log"),
+                Path.Combine(root, ClassicLauncherLayout.RootMarker), Path.Combine(root, ClassicLauncherLayout.RootLockRecord)];   // batch 857: the root mark and record stay
             TestAssert.Equal(string.Join(",", stays.Order(StringComparer.Ordinal)), string.Join(",", Entries(root).Order(StringComparer.Ordinal)),
                 "only the game's managed layout and the root's own log stay");
             TestAssert.True(File.Exists(Path.Combine(record.Air, "LolClient.exe")) && File.Exists(Path.Combine(record.Air, "lol.properties")) &&
@@ -663,7 +684,7 @@ public static class ClassicLauncherChecks
             var offer = LauncherOffer(pins.Launcher);
             var rerun = PlayerDownload.Plan(kept.Install, offer, recorded, kept.Profile, null, pins);
             TestAssert.Equal((recorded.Air, recorded.Game), (rerun.Air, rerun.Game), "the re-run plan keeps the recorded AIR and game");
-            PlayerDownload.Place(staging, rerun, offer, pins, "Alpha", null, CancellationToken.None);
+            PlayerDownload.Place(staging, rerun, Staged(offer, staging), pins, "Alpha", null, CancellationToken.None);
             PlayerInstall.Install(kept.Profile, rerun, connection, "Alpha", kept.Tool);
 
             var after = PlayerInstall.ReadRecord(kept.Profile) ?? throw new InvalidOperationException("no record after the re-run");
@@ -968,6 +989,91 @@ public static class ClassicLauncherChecks
         return null;
     }
 
+    /// <summary>
+    /// Batch 857 (the orchestrator's final rulings, 17 November 2026): a RADS root other Windows accounts can change, marked or not (an earlier
+    /// Amberline's: its stamp, no mark, the drive's permissions), is never deleted or changed: the classic start falls back to the usual one and the
+    /// reason tells the player to delete it. Once deleted, the next start lays it out again, locked.
+    /// </summary>
+    [Check("server.classic-launcher-earlier-root")]
+    public static void AnOpenRootFallsBackUntilThePlayerDeletesIt()
+    {
+        var temp = InstallLockChecks.Hazard(TempFolder());
+        var root = Path.Combine(temp, "rads");
+        try
+        {
+            var launcher = Path.Combine(temp, "launcher");
+            WriteLauncherFiles(launcher);
+            var (air, game) = (Path.Combine(temp, "air"), Path.Combine(temp, "game"));
+            Directory.CreateDirectory(air);
+            File.WriteAllText(Path.Combine(air, "LolClient.exe"), "air exe");
+            File.WriteAllText(Path.Combine(air, "lol.properties"), "host=127.0.0.1\n");
+            Directory.CreateDirectory(game);
+            File.WriteAllText(Path.Combine(game, "League of Legends.exe"), "game exe");
+            var log = new List<string>();
+            var request = new ClassicLayoutRequest(root, launcher, air, game, 8390);
+            TestAssert.Equal<string?>(null, ClassicLauncherLayout.Ensure(request, log.Add).Refusal, "laid out, locked");
+            string Delete(string folder) => $"Delete the folder {folder}; Amberline then lays it out again, locked to your Windows account, at the next start.";
+
+            // Marked, but others can change it now (review B): the mark skips nothing.
+            Amberline.AirCompanion.InstallLock.Restamp(root, null);
+            File.WriteAllText(Path.Combine(root, "system", "system.cfg"), "Region = EUW\r\n");
+            var open = InstallLockChecks.Sddl(root);
+            TestAssert.True(ClassicLauncherLayout.Ensure(request, log.Add).Refusal is { } marked && marked.EndsWith(Delete(root), StringComparison.Ordinal),
+                "a marked root others can change: the usual start, and the reason says to delete it");
+            TestAssert.Equal(open, InstallLockChecks.Sddl(root), "and it is left as it is");
+
+            // As an earlier version left it (its stamp, no mark, no record): the same, and still nothing is changed.
+            File.Delete(Path.Combine(root, ClassicLauncherLayout.RootMarker));
+            File.Delete(Path.Combine(root, ClassicLauncherLayout.RootLockRecord));
+            var earlier = InstallLockChecks.Sddl(root);
+            TestAssert.True(ClassicLauncherLayout.Ensure(request, log.Add).Refusal is { } stamped && stamped.EndsWith(Delete(root), StringComparison.Ordinal),
+                "an earlier Amberline's root others can change: the usual start, and the reason says to delete it");
+            TestAssert.True(InstallLockChecks.Sddl(root) == earlier && File.ReadAllText(Path.Combine(root, "system", "system.cfg")) == "Region = EUW\r\n",
+                "and it is never deleted or changed");
+
+            // Re-review 2 (HIGH 1): removing the layout from such a root is refused too. Nothing in it changes, and the player is told to delete it.
+            RefusedWith(() => ClassicLauncherLayout.Remove(root, _ => { }), $"Amberline removed nothing there; delete the folder {root} yourself.");
+            var profile = new PlayerProfile(Path.Combine(temp, "profile", "Local"), Path.Combine(temp, "profile", "Desktop"));
+            var removal = PlayerUninstall.RemoveAll(profile, new PlayerInstall.Record(Path.Combine(temp, "install"), air, game), deleteGame: false, radsRoot: root);
+            TestAssert.True(removal.Left.Contains(root), $"the uninstall lists the root to delete by hand: {string.Join(", ", removal.Left)}");
+            TestAssert.Equal(earlier, InstallLockChecks.Sddl(root), "and changes nothing in it");
+
+            // The player deletes it: the next start lays it out again, locked.
+            DeleteAsThePlayer(root);
+            TestAssert.Equal<string?>(null, ClassicLauncherLayout.Ensure(request, log.Add).Refusal, "laid out again");
+            TestAssert.True(File.Exists(Path.Combine(root, ClassicLauncherLayout.RootMarker)) && new DirectoryInfo(root).GetAccessControl().AreAccessRulesProtected &&
+                Amberline.AirCompanion.InstallLock.Inspect(root, _ => true) is null, "marked and locked (its junctions not followed)");
+            TestAssert.True(File.Exists(Path.Combine(air, "LolClient.exe")) && File.Exists(Path.Combine(game, "League of Legends.exe")),
+                "the folders behind the junctions are untouched");
+
+            // Re-review 2 (HIGH 1): in a root that passes, a stamped path reached through a link is never deleted, even when that link is recorded
+            // (here in the other line's stamp, so the root's check passes it over).
+            var victim = Directory.CreateDirectory(Path.Combine(temp, "victim")).FullName;
+            File.WriteAllText(Path.Combine(victim, "keep.txt"), "mine");
+            MakeJunction(Path.Combine(root, "system", "via"), victim);
+            File.AppendAllLines(Path.Combine(root, @"projects\lol_launcher", "classic132.stamp"), [@"J system\via"]);
+            File.AppendAllLines(Path.Combine(root, @"projects\lol_launcher", ClassicLauncherLayout.StampName), [@"system\via\keep.txt"]);
+            var removeLog = new List<string>();
+            ClassicLauncherLayout.Remove(root, removeLog.Add);
+            TestAssert.True(File.Exists(Path.Combine(victim, "keep.txt")), "a stamped file behind a link is never deleted");
+            TestAssert.True(removeLog.Any(line => line.Contains(@"system\via\keep.txt: a link lies on its way", StringComparison.Ordinal)), "and the removal says why it kept it");
+        }
+        finally
+        {
+            if (Directory.Exists(root)) DeleteAsThePlayer(root);
+            if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
+        }
+    }
+
+    /// <summary>Deletes a folder as File Explorer does: a junction in it goes as a link and is never followed.</summary>
+    private static void DeleteAsThePlayer(string folder)
+    {
+        foreach (var child in Directory.EnumerateDirectories(folder))
+            if (File.GetAttributes(child).HasFlag(FileAttributes.ReparsePoint)) Directory.Delete(child);
+            else DeleteAsThePlayer(child);
+        Directory.Delete(folder, recursive: true);
+    }
+
     private static string TempFolder() => Path.Combine(Path.GetTempPath(), "amberline-b760-" + Guid.NewGuid().ToString("N"));
 
     /// <summary>The launcher folder a server's stage names (its stage.json's launcherRoot).</summary>
@@ -1004,6 +1110,17 @@ public static class ClassicLauncherChecks
     }
 
     /// <summary>The launcher's files as a server's list gives them: every file of the release, the EXE with <paramref name="sha"/> (the other hashes are not checked here).</summary>
+    /// <summary>
+    /// Batch 857 review: <paramref name="offer"/> with each staged file's own size and SHA-256, as a real download's list has them (Place hashes every
+    /// file again against the list); a file that is not staged keeps its entry.
+    /// </summary>
+    internal static PlayerDownload.Offer Staged(PlayerDownload.Offer offer, string staging)
+    {
+        var files = offer.Files.Select(entry => Path.Combine(staging, entry.Path.Replace('/', '\\')) is var path && File.Exists(path)
+            ? entry with { Size = new FileInfo(path).Length, Sha256 = RetailClients.Sha256(path) } : entry).ToList();
+        return new(files, files.Sum(entry => entry.Size));
+    }
+
     private static PlayerDownload.Offer LauncherOffer(string sha)
     {
         var files = ClassicLauncherFiles.Required
@@ -1129,6 +1246,8 @@ public static class ClassicLauncherChecks
                 path.EndsWith(".exe", StringComparison.Ordinal)) File.WriteAllText(path, "other line: " + line);
             else Directory.CreateDirectory(path);
         }
+        // Batch 857 review: an earlier line's root is used as it is only while it is private (as one in a private place would be).
+        Amberline.AirCompanion.InstallLock.Lock(root);
     }
 
     /// <summary>Cleanup: every junction left under <paramref name="root"/> removed as a link, so the temp folder's recursive delete never meets one.</summary>

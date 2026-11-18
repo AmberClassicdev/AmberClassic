@@ -82,7 +82,7 @@ public static class HostInviteChecks
             TestAssert.True(ready.Contains("<h1>friend1 is ready</h1>", StringComparison.Ordinal) &&
                 ready.Contains("<a href=/host/play-file download>Download the Play file for Test Server</a>", StringComparison.Ordinal) &&
                 ready.Contains("<button type=button data-copy=message>Copy</button>", StringComparison.Ordinal) &&
-                ready.Contains("<script src=/host/page.js defer></script>", StringComparison.Ordinal) &&
+                ready.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal) &&
                 ready.Contains("The password is shown only now.", StringComparison.Ordinal) && !ready.Contains("onclick", StringComparison.Ordinal), ready);
             var message = Message(ready);
             TestAssert.True(message.StartsWith("Join my game server \"Test Server\"!\n", StringComparison.Ordinal) &&

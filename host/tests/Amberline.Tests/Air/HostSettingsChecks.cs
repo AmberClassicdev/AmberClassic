@@ -347,7 +347,7 @@ public static class HostSettingsChecks
                 ("game", home.Game), ("air", home.Air), ("paste", Path.Combine(home.Root, "nowhere"))), HttpStatusCode.BadRequest);
             Has(nowhere, "Amberline cannot find that folder.");
             var restarting = await TextAsync(await PostAsync(browser, HostSettingsPage.FoldersPath, folders, ("game", home.Game), ("air", home.Air)), HttpStatusCode.OK);
-            Has(restarting, "<h1>Starting Amberline</h1>", "http-equiv=refresh", "&to=settings");
+            Has(restarting, $"<h1>Starting {HostPages.Product}</h1>", "http-equiv=refresh", "&to=settings");
             await WaitForStartsAsync(home.Loop, 3, run);
             await WaitForHealthAsync(browser, "ready", run);
             // Batch 649: the restart's reopen lands on Settings, which says the folders are saved (the browser is signed in: no new code).
@@ -455,18 +455,30 @@ public static class HostSettingsChecks
             var plan = HostUninstall.Plan(home.Loop.Paths, new PlatformSettings(home.Game, null!, AirRoot: home.Air), places.LocalAppData)!;
             TestAssert.True(plan.OneFolder && plan.Folder == root, $"the install folder: {plan.Folder}");
             TestAssert.Equal("my notes.txt", string.Join(", ", plan.Others), "only the host's own file is not Amberline's");
+            // Batch 867: without a rule of Amberline's in Windows Firewall the page names none (it promised "its two rules" always, batch 863).
+            List<ShownRule> ours;
+            lock (rules)
+            {
+                ours = rules.Where(rule => rule.Name.StartsWith("Amberline", StringComparison.Ordinal)).ToList();
+                rules.RemoveAll(ours.Contains);
+            }
+            var noRules = await GetAsync(browser, HostSettingsPage.UninstallPath);
+            TestAssert.True(noRules.Contains("Type uninstall to confirm", StringComparison.Ordinal) && !noRules.Contains("Firewall", StringComparison.Ordinal),
+                "no rule, no firewall line: " + noRules);
+            lock (rules) rules.InsertRange(0, ours);
             var form = await GetAsync(browser, HostSettingsPage.UninstallPath);
             Has(form, $"Amberline's folder: <b>{WebUtility.HtmlEncode(root)}</b> ({HostUninstall.Size(plan.Bytes)}).",
                 $"Also delete the game and AIR client copies ({HostUninstall.Size(plan.Size(UninstallKind.Clients))})",
                 $"Also delete your logins and settings ({HostUninstall.Size(plan.Size(UninstallKind.Data))})",
-                WebUtility.HtmlEncode($"The game folder you chose stays where it is: {home.Game}"), "Type uninstall to confirm", "Windows asks once");
+                WebUtility.HtmlEncode($"The game folder you chose stays where it is: {home.Game}"), "Type uninstall to confirm",
+                "<li>its Windows Firewall rules (Windows asks once, for Windows Command Processor: choose Yes)</li>");
 
             var unconfirmed = await TextAsync(await PostAsync(browser, HostSettingsPage.UninstallPath, form, ("clients", "on"), ("confirm", "yes")), HttpStatusCode.BadRequest);
             Has(unconfirmed, "Type uninstall in the box to confirm.", "id=confirm-error", "name=clients value=on checked");
             TestAssert.True(commands.Count == 0 && File.Exists(icon) && File.Exists(pointer), "an unconfirmed uninstall changes nothing");
 
             var done = await TextAsync(await PostAsync(browser, HostSettingsPage.UninstallPath, form, ("clients", "on"), ("confirm", " Uninstall ")), HttpStatusCode.OK);
-            Has(done, "<h1>Amberline is uninstalled</h1>", "Amberline&#39;s rules in Windows Firewall are removed.", "The Amberline icon on your desktop is removed.",
+            Has(done, $"<h1>{HostPages.Product} is uninstalled</h1>", "Amberline&#39;s rules in Windows Firewall are removed.", "The Amberline icon on your desktop is removed.",
                 WebUtility.HtmlEncode($"Your logins, your settings, the server's certificate and the logs: {Path.Combine(root, "data")}"),
                 WebUtility.HtmlEncode($"Other things in {root}, which are not Amberline's: my notes.txt"));
             TestAssert.False(await run.WaitAsync(TimeSpan.FromSeconds(30)), "the uninstall stops Amberline");
@@ -637,7 +649,7 @@ public static class HostSettingsChecks
             var (game, air) = (Path.Combine(folder.Install, @"game\projects\lol_game_client\releases\0.0.0.51"), Path.Combine(folder.Install, "air"));
             Has(done, "<h1>Change the folders</h1>", "<p class=notice>Done: the game files are in", "aria-current=page>Settings</a>", $"<form method=post action={Folders} data-wait=",
                 $"name=game value=\"{WebUtility.HtmlEncode(game)}\"");
-            Has(await TextAsync(await PostAsync(browser, Folders, done, ("game", game), ("air", air)), HttpStatusCode.OK), "<h1>Starting Amberline</h1>");
+            Has(await TextAsync(await PostAsync(browser, Folders, done, ("game", game), ("air", air)), HttpStatusCode.OK), $"<h1>Starting {HostPages.Product}</h1>");
             TestAssert.True(await run.WaitAsync(TimeSpan.FromSeconds(30)), "Continue saves the copies and restarts");
             folder.Names(game, air);
             folder.NothingHalfDone();

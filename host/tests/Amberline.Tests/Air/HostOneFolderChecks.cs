@@ -36,6 +36,8 @@ public static class HostOneFolderChecks
             // The start's order (HostMode): the folder is checked, then the log opens in its data\logs, then the install runs. The
             // install refused that log as "other files" (owner, 3 November 2026).
             TestAssert.Equal(null, install.Check(), "the new folder is accepted");
+            // Batch 857: then the folder is made and locked (HostMode calls LockNew before it opens the log).
+            TestAssert.Equal(null, install.LockNew(), "the new folder is made and locked");
             HostMode.OpenLog(install.Target.Logs, DateTime.Now).Dispose();
             TestAssert.Equal(0, await install.RunAsync(), screen.ToString());
 
@@ -325,6 +327,9 @@ public static class HostOneFolderChecks
             {
                 foreach (var file in ClassicLauncherFiles.Required.Append("releasemanifest").Append("amberline-client-zip.txt"))
                     TestAssert.True(File.Exists(Path.Combine(folder, file)), $"{what}: {file} beside the install");
+                // Batch 857: the folder beside the install is locked as the install is (protected, and every file private).
+                TestAssert.True(new DirectoryInfo(folder).GetAccessControl().AreAccessRulesProtected && InstallLockChecks.FirstOpen(folder) is null,
+                    $"{what}: the launcher beside the install is locked ({InstallLockChecks.FirstOpen(folder)})");
             }
 
             // A new install: the launcher is beside it, whole, and platform.json names it.
@@ -363,6 +368,106 @@ public static class HostOneFolderChecks
             HasLauncher(againBeside, "a replaced launcher");
             TestAssert.True(!File.Exists(Path.Combine(againBeside, "old.txt")) && Same(againBeside, LauncherRoot(again)), "the earlier launcher folder was replaced");
             TestAssert.Equal(zipSha, Sha256(zip), "the zip is byte-identical");
+        }
+        finally { HostModeChecks.Delete(root); }
+    }
+
+    /// <summary>
+    /// Batch 857 (design steps 1-3, 6): the host's install folder is locked to the installing account. A folder of another account (a stand-in SID),
+    /// beside the install too, or a link is refused; a new folder is made and locked before its first write; the game and the AIR client keep the
+    /// drive's permissions when they are moved in, and take the install's; the start makes a full pass and records it; an update's swap drops the
+    /// record; Status says either.
+    /// </summary>
+    [Check("server.host-one-folder-locked", TimeoutSeconds = 180)]
+    public static void TheInstallFolderIsLockedToTheInstallingAccount() => LockedAsync().GetAwaiter().GetResult();
+
+    private static async Task LockedAsync()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var root = AirBootstrapChecks.TemporaryDirectory("league-one-folder-lock");
+        try
+        {
+            var drive = InstallLockChecks.Hazard(Path.Combine(root, "drive"));
+            var downloads = Path.Combine(drive, "downloads");
+            var clients = Clients.Make(downloads, Path.Combine(downloads, "lol_air_client"));
+            var folder = Path.Combine(drive, "Amberline");
+            const string Other = " Choose another folder, for example C:\\Amberline.";
+            var someone = new InstallRules([], [], InstallLockChecks.Someone);
+            Directory.CreateDirectory(folder);
+            TestAssert.Equal($"{folder} belongs to another Windows account." + Other, HostInstall.FolderProblem(folder, null, someone), "another account's folder");
+            Directory.Delete(folder);
+            foreach (var beside in new[] { folder + ".client-zip", folder + "-launcher" })
+            {
+                Directory.CreateDirectory(beside);
+                TestAssert.Equal($"{beside} belongs to another Windows account." + Other, HostInstall.FolderProblem(folder, null, someone), "another account's folder beside it");
+                Directory.Delete(beside);
+            }
+            HostLoginCopyChecks.Junction(folder, downloads);
+            TestAssert.Equal($"{folder} is a link to another place." + Other, HostInstall.FolderProblem(folder, null, new([], [])), "a junction");
+            Directory.Delete(folder);
+
+            // The start's order (HostMode): the folder is checked, made and locked, and only then the log opens in its data\logs.
+            var screen = new StringWriter();
+            var started = new List<string>();
+            var install = Installer(root, HostInstallChecks.Release(Path.Combine(root, "zip-1.4.0"), "1.4.0"), folder,
+                new(clients.Game, clients.Air, DeleteOriginals: true), screen, started, clients.Pins);
+            TestAssert.Equal(null, install.Check(), "the new folder is accepted");
+            TestAssert.Equal(null, install.LockNew(), "made and locked");
+            TestAssert.True(Directory.Exists(folder) && !Directory.Exists(Path.Combine(folder, "data")), "nothing written in it yet");
+            TestAssert.True(new DirectoryInfo(folder).GetAccessControl().AreAccessRulesProtected && CopyPlaces.Private(folder), "locked before its first write");
+            HostMode.OpenLog(install.Target.Logs, DateTime.Now).Dispose();
+            TestAssert.Equal(0, await install.RunAsync(), screen.ToString());
+            TestAssert.Equal(null, InstallLockChecks.FirstOpen(folder), "the game and the AIR client moved in took the install's lock");
+
+            // The installed Platform's start: a full pass, recorded; an update's swap drops the record, so the next start walks it all again.
+            var paths = install.Target;
+            var loop = new HostLoop(paths, _ => { }, TextWriter.Null) { LockCheck = () => InstallLock.Check(folder, paths.LockRecord, Local(root), root) };
+            loop.CheckLock();
+            TestAssert.Equal<(bool, string)?>((true, InstallLock.LockedLine), loop.LockLine, "the start: locked");
+            TestAssert.True(File.Exists(paths.LockRecord), "the full pass is recorded");
+            // An update stops what answers on the install's port: this check's own free one, never the line's default.
+            var saved = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(paths.Settings))!.AsObject();
+            saved["httpPort"] = FreePort();
+            File.WriteAllText(paths.Settings, saved.ToJsonString());
+            var update = new StringWriter();
+            TestAssert.Equal(0, await Installer(root, HostInstallChecks.Release(Path.Combine(root, "zip-1.5.0"), "1.5.0"), folder, null, update, started, clients.Pins)
+                .RunAsync(), update.ToString());
+            TestAssert.True(!File.Exists(paths.LockRecord) && InstallLockChecks.FirstOpen(folder) is null, "the swap: still private, and the record went");
+
+            // Review HIGH 2 and its follow-up: the start also checks the 2011 launcher folder beside the install. Without the client zip's mark it is
+            // reported and never used; with it, it is locked. Review LOW 9: a link beside an install refuses a new install, never an update.
+            var launcherBeside = folder + "-launcher";
+            Directory.CreateDirectory(launcherBeside);
+            File.WriteAllText(Path.Combine(launcherBeside, "LoLLauncher.exe"), "not Amberline's");
+            TestAssert.Equal($"{launcherBeside} was not put there by Amberline, so Amberline does not use it", HostMode.LockInstall(folder, paths, Local(root), root),
+                "a launcher folder without the mark");
+            TestAssert.Equal(null, HostMode.UsableLauncher(launcherBeside, paths), "and it is never shared or started");
+            File.WriteAllText(Path.Combine(launcherBeside, Amberline.AirCompanion.ClientZip.Marker), "Amberline put the 2011 launcher here");
+            TestAssert.Equal(null, HostMode.LockInstall(folder, paths, Local(root), root), "the marked launcher folder: locked");
+            TestAssert.True(new DirectoryInfo(launcherBeside).GetAccessControl().AreAccessRulesProtected && InstallLockChecks.FirstOpen(launcherBeside) is null, "the launcher folder is private");
+            FolderMove.TryDeleteTree(launcherBeside);
+            HostLoginCopyChecks.Junction(launcherBeside, drive);
+            TestAssert.Equal(null, HostInstall.FolderProblem(folder, null, new([], [])), "an update never stops on the folder launcherBeside it");
+            var newFolder = Path.Combine(drive, "New Amberline");
+            HostLoginCopyChecks.Junction(newFolder + "-launcher", drive);
+            TestAssert.Equal($"{newFolder}-launcher is a link to another place." + Other, HostInstall.FolderProblem(newFolder, null, new([], [])),
+                "a new install refuses a link launcherBeside it");
+            Directory.Delete(newFolder + "-launcher");
+            Directory.Delete(launcherBeside);
+
+            // Status: one line, ok or waiting, never bad (a folder that cannot be locked has nothing to do with players joining); none by default.
+            var settings = new PlatformSettings(clients.Game, paths.ServerExecutable);
+            async Task<string> LineAsync(HostLoop shown)
+            {
+                await using var dashboard = new HostDashboard(shown, settings, () => [], () => []);
+                return string.Join(" | ", dashboard.Status(DateTimeOffset.Now).Checks.Where(check => check.Id == "install").Select(check => $"{check.State}: {check.Text}"));
+            }
+            TestAssert.Equal($"ok: {InstallLock.LockedLine}", await LineAsync(loop), "locked");
+            loop.LockCheck = () => $"{folder} belongs to another Windows account";
+            loop.CheckLock();
+            TestAssert.Equal($"waiting: Other Windows accounts on this PC may be able to change this install: {folder} belongs to another Windows account",
+                await LineAsync(loop), "not locked: the reason");
+            TestAssert.Equal("", await LineAsync(new HostLoop(paths, _ => { }, TextWriter.Null)), "a loop without the real check shows no line");
         }
         finally { HostModeChecks.Delete(root); }
     }

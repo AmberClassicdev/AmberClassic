@@ -31,6 +31,8 @@ public static class PlatformLine
     /// (<see cref="HostLoginCopy"/>): its <c>FolderMove.HostName</c> and <c>InstallMarker</c> (<c>126/patch.json</c> "home"). The 1.0.0.126
     /// line has no such value; its Program.cs offers no copy. NOT RETAIL (batch 856): its friends' port, 8391 (<c>126/patch.json</c> "ports"
     /// "remote"), where this line's stand-in answers that line's old shortcuts while the host guides them here (<see cref="HostOldShortcuts"/>).
+    /// NOT RETAIL (batch 857, owner 17 November 2026: "126 locks itself"): 0.1.26, the first 1.0.0.126 release whose start locks its install;
+    /// until it is locked, the login copy and the stand-in refuse it and name that release.
     /// </summary>
-    public static readonly EarlierHome CopyLoginsFrom = new("Amberline", "amberline-install.json", "1.0.0.126", RemotePort: 8391);
+    public static readonly EarlierHome CopyLoginsFrom = new("Amberline", "amberline-install.json", "1.0.0.126", RemotePort: 8391, LocksFrom: "0.1.26");
 }

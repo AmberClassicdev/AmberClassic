@@ -589,7 +589,19 @@ internal sealed class BbBuffRuntime
     /// </summary>
     private static bool IsZenithBladeOwnAdd(BbScript script) =>
         string.Equals(script.Name, "LeonaZenithBlade", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(script.Name, "LeonaZenithBladeMissile", StringComparison.OrdinalIgnoreCase);
+        string.Equals(script.Name, "LeonaZenithBladeMissile", StringComparison.OrdinalIgnoreCase) ||
+        IsGlacialPrisonListener(script);
+
+    /// <summary>
+    /// Batch 870 (the screenshot sweep: "Snared!" over Sejuani on every Glacial Prison): <c>SejuaniGlacialPrisonStart</c>'s <c>SelfExecute</c> adds the
+    /// script to Sejuani herself for 2 s so its <c>BuffOnMissileEnd</c> can detonate the prison where her missile ends; nothing in it holds her (no
+    /// <c>BBSetStatus</c>). Its template is Morgana's Dark Binding copy (<c>BuffName='Dark Binding'</c>, <c>PopupMessage1='game_floatingtext_Snared'</c>)
+    /// with Sejuani's icon, and the stock client paints a template's popup over the local hero on the add (the popup branch, see
+    /// <see cref="ClearsItselfOnActivate"/>). The wiki's Glacial Prison stuns the enemies; Sejuani is never snared. Reconstruction, as for Zenith Blade
+    /// (owner finding 48): retail's wire for this add is not in the shipped files; the listener stays on the server and only the client's add is withheld.
+    /// </summary>
+    private static bool IsGlacialPrisonListener(BbScript script) =>
+        string.Equals(script.Name, "SejuaniGlacialPrisonStart", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Whether the buff's own shipped script draws its activation effect: a <c>BBSpellEffectCreate</c> anywhere in its

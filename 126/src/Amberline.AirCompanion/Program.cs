@@ -124,7 +124,7 @@ public static class Program
         if (string.IsNullOrWhiteSpace(stage.StockExecutable))
             throw new ArgumentException("The staged remote client has no stock executable. Select the game executable in the guest launcher first.");
         if (stage.AirSource is not null) PrepareHostAir(stage);
-        PrepareGameFolder(stage.StockExecutable);
+        PrepareGameFolder(stage.StockExecutable, notice);
         // Loopback-only font server for the AIR pages; lives until the companion ends and never blocks the launch.
         await using var fonts = await FrizFontServer.StartAsync(stage.AirRoot, Console.WriteLine);
         using var stop = new CancellationTokenSource();
@@ -228,8 +228,11 @@ public static class Program
         return null;
     }
 
-    /// <summary>Everything about the picked game folder that is checked before AIR opens. Never blocks the launch.</summary>
-    private static void PrepareGameFolder(string stockExecutable)
+    /// <summary>
+    /// Everything about the picked game folder that is checked before AIR opens. Never blocks the launch. <paramref name="notice"/> shows the
+    /// managed layout's reason when it does not use the RADS root (batch 857 re-review 3), as the classic start's fallback shows its own.
+    /// </summary>
+    private static void PrepareGameFolder(string stockExecutable, Action<string>? notice = null)
     {
         var directory = Path.GetDirectoryName(Path.GetFullPath(stockExecutable))!;
         Console.WriteLine(GameFolderReport.Describe(directory));
@@ -237,7 +240,7 @@ public static class Program
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         { Console.WriteLine($"language-pack: not deployed ({exception.GetType().Name}); the game starts without it"); }
         // After the language pack, which adds files under DATA: the stamp covers them. Background work, never awaited here.
-        _ = GameManagedLayout.Start(directory, Console.WriteLine);
+        _ = GameManagedLayout.Start(directory, Console.WriteLine, notice: notice);
     }
 
     /// <summary>

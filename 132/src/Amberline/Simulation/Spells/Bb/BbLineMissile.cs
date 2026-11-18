@@ -38,6 +38,10 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
     private readonly Entity? _tracked;
     private double _speed;
     private readonly double _fixedTravel;
+    // SpellData MissileAccel and the speed bounds it runs between (Fly); zero for every shipped line but Orb of Deception's two.
+    private readonly double _accel;
+    private readonly double _minSpeed;
+    private readonly double _maxSpeed;
     private readonly double _width;
     private readonly HashSet<string> _flags;
     private readonly HashSet<uint> _hit = new();
@@ -88,6 +92,9 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         _endsAtTargetPoint = BbChampionModule.RawCount(data, "SpellData*LineMissileEndsAtTargetPoint") != 0;
         _speed = data.MissileSpeed;
         _fixedTravel = data.MissileFixedTravelTime;
+        _accel = ChampionSpellSupport.RawNumber(data, "SpellData*MissileAccel");
+        _minSpeed = ChampionSpellSupport.RawNumber(data, "SpellData*MissileMinSpeed");
+        _maxSpeed = ChampionSpellSupport.RawNumber(data, "SpellData*MissileMaxSpeed");
         _width = ChampionSpellSupport.LineWidth(data, 90.0);
         _flags = flags;
         _instant = data.IsInstant;
@@ -180,7 +187,7 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         // BBDestroyMissile flagged the line (the client was told then): it ends at this step.
         if (_flight.Destroyed) return Finish(system);
         // A launched missile survives its caster's death (stock missile updates need the caster object, not a living caster).
-        var remainingDistance = left * _speed;
+        var remainingDistance = Fly(left);
         if (_tracked is not null) return Track(system, remainingDistance);
         // Reconstruction: a pass can turn and meet the first units of the next in one step; the loop keeps the step's leftover.
         for (var pass = 0; pass < 3 && remainingDistance > 1e-9; pass++)
@@ -301,6 +308,36 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
         return true;
     }
 
+
+    /// <summary>
+    /// Batch 870: the distance the line flies in <paramref name="dt"/> seconds, leaving <c>_speed</c> at its speed after them. <c>SpellData*MissileAccel</c>
+    /// changes the speed by that many units a second every second, held between <c>MissileMinSpeed</c> and <c>MissileMaxSpeed</c> (the client's line
+    /// update has the acceleration branch the 0x41's speed field feeds, see <c>ChampionSpellSupport.RefreshMissile</c>). In 1.0.0.132 only Orb of
+    /// Deception sets it: <c>AhriOrbMissile</c> leaves at 2500 and slows by 3200 to 400, <c>AhriOrbReturn</c> leaves at 60 and speeds up by 1900 to
+    /// 2600. At a constant 60 the server's returning orb crawled (about 15 s back to Ahri) while the client's came back in under a second, so its
+    /// true damage never landed (the batch 870 screenshot sweep). Reconstruction: the integration over a step (exact for a constant acceleration,
+    /// held at the bound once reached) is the server's; the client's per-frame update is the same law.
+    /// </summary>
+    private double Fly(double dt)
+    {
+        if (_accel == 0.0 || dt <= 0.0) return dt * _speed;
+        var bound = _accel > 0.0 ? (_maxSpeed > 0.0 ? _maxSpeed : double.PositiveInfinity) : Math.Max(0.0, _minSpeed);
+        var reach = (bound - _speed) / _accel;
+        if (reach <= 0.0)
+        {
+            _speed = bound;
+            return dt * _speed;
+        }
+        var changing = Math.Min(dt, reach);
+        var distance = _speed * changing + 0.5 * _accel * changing * changing;
+        _speed += _accel * changing;
+        if (changing < dt)
+        {
+            _speed = bound;
+            distance += bound * (dt - changing);
+        }
+        return distance;
+    }
 
     private void Launch()
     {

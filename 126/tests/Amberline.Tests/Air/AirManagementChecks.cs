@@ -84,7 +84,7 @@ public static class AirManagementChecks
                         TestAssert.Equal(HttpStatusCode.NotFound, table.StatusCode, "the operator's page has no table route");
                         continue;
                     }
-                    TestAssert.True(!live.Contains("http-equiv=refresh", StringComparison.Ordinal) && live.Contains("<script src=/host/page.js defer></script>", StringComparison.Ordinal) &&
+                    TestAssert.True(!live.Contains("http-equiv=refresh", StringComparison.Ordinal) && live.Contains($"<script src=\"{HostPages.ScriptHref}\" defer></script>", StringComparison.Ordinal) &&
                         live.Contains("<p id=online-count aria-live=polite>1 person is logged in.</p>", StringComparison.Ordinal) &&
                         live.Contains("<table id=online-table data-live><thead><tr><th scope=col>Username</th>", StringComparison.Ordinal) &&
                         live.Contains("<tbody id=online-rows><tr><td>alpha</td><td>&lt;b&gt;Chuck&lt;/b&gt;", StringComparison.Ordinal) &&

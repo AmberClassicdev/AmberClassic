@@ -93,7 +93,7 @@ public static class HostSelfRegistrationChecks
                 form.Contains($"href=\"{HostPages.PublicStyleHref}\"", StringComparison.Ordinal) &&
                 form.Contains("<p class=already>Already have a login?</p><p><a class=button href=/register/Play.cmd download>Download the Play file</a></p>", StringComparison.Ordinal) &&
                 // Owner, 7 November 2026: the Amberline wordmark above the panel, no footer.
-                form.Contains("<header><p class=wordmark>Amberline</p></header>", StringComparison.Ordinal) && !form.Contains("<footer>", StringComparison.Ordinal), form);
+                form.Contains($"<header><p class=wordmark>{HostPages.Product}</p></header>", StringComparison.Ordinal) && !form.Contains("<footer>", StringComparison.Ordinal), form);
             using (var sheet = await person.GetAsync(Style))
             {
                 TestAssert.Equal(HttpStatusCode.OK, sheet.StatusCode, "the sign-up page's stylesheet");

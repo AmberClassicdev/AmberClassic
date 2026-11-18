@@ -20,6 +20,9 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        // DIAGNOSTICS (batch 857): every check's throwaway folders lie under the temp folder, so the install lock's walk of the folders above an
+        // install stops there: the folders above it are this PC's, not a check's.
+        Amberline.AirCompanion.InstallLock.Top = Path.GetTempPath();
         try
         {
             return Run(args);

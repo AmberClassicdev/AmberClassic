@@ -142,12 +142,19 @@ internal static class PlayerUninstall
         // NOT RETAIL (classic start): the layout goes before the install folder, since its junctions point into it (Remove takes links as links only).
         if (radsRoot is not null)
         {
+            // Batch 857 re-review 2 (HIGH 1): a root that fails the classic start's checks loses nothing; the window lists it to delete by hand.
+            var refused = false;
             try { ClassicLauncherLayout.Remove(radsRoot, line => PlayerInstall.Log(profile, line)); }
+            catch (InstallRefusedException exception)
+            {
+                PlayerInstall.Log(profile, $"uninstall: the 2011 launcher's layout: {exception.Message}");
+                refused = true;
+            }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
                 PlayerInstall.Log(profile, $"uninstall: the 2011 launcher's layout: {exception.Message}");
             }
-            if (ClassicLauncherLayout.Remaining(radsRoot) is { } rest) left.Add(rest);
+            if ((refused ? radsRoot : ClassicLauncherLayout.Remaining(radsRoot)) is { } rest) left.Add(rest);
         }
         foreach (var path in paths)
         {
@@ -167,6 +174,7 @@ internal static class PlayerUninstall
     /// <paramref name="root"/> goes first (what its stamp lists; junctions as links), then <c>&lt;install&gt;\launcher</c>, the launcher's own files that
     /// the installer moved in. A link in that folder is refused before anything changes: a link is never followed. A file still in use keeps the layout,
     /// its stamp and the folder, and is refused with a sentence, so the next choice finishes the job. With nothing left, a second call removes nothing.
+    /// Batch 857 re-review 2 (HIGH 1): a root that fails the classic start's checks refuses before anything changes, and says to delete it by hand.
     /// <paramref name="log"/> receives the layout's own lines.
     /// </summary>
     internal static IReadOnlyList<string> RemoveLauncher(PlayerInstall.Record record, string? root, Action<string>? log = null)

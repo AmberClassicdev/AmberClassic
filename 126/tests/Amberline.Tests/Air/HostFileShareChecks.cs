@@ -125,6 +125,24 @@ public static class HostFileShareChecks
                 TestAssert.True((await answer.Content.ReadAsByteArrayAsync()).AsSpan().SequenceEqual(File.ReadAllBytes(expected[Exe]).AsSpan(1000, 1000)), "the range's bytes");
             }
             await StatusAsync(player, HttpStatusCode.OK, "a manifest path with a space", Url(Release + "/DATA/Spells file.inibin"));
+            // Batch 857 (the orchestrator, 17 November 2026): a game or AIR folder used where it is (no locked install holds it) stays shared. A file is
+            // served whoever may change it (the player's side hashes every file against the list), and Settings warns while other Windows accounts can.
+            var spells = expected[Release + "/DATA/Spells file.inibin"];
+            var users = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinUsersSid, null);
+            var write = new System.Security.AccessControl.FileSystemAccessRule(users, System.Security.AccessControl.FileSystemRights.Write,
+                System.Security.AccessControl.AccessControlType.Allow);
+            var writable = new FileInfo(spells).GetAccessControl();
+            writable.AddAccessRule(write);
+            new FileInfo(spells).SetAccessControl(writable);
+            await StatusAsync(player, HttpStatusCode.OK, "a file others may change, with the listed bytes", Url(Release + "/DATA/Spells file.inibin"));
+            await PostAsync(browser, Switch, Token(await browser.GetStringAsync(HostSettingsPage.PagePath)), HttpStatusCode.Redirect, ("on", "on"));
+            await ManifestAsync(player);
+            TestAssert.True((await SettingsAsync(browser, "Settings, a file others may change")).Contains(HostFileShare.OpenWarning, StringComparison.Ordinal),
+                "Settings warns that other Windows accounts can change the shared files");
+            var restored = new FileInfo(spells).GetAccessControl();
+            restored.RemoveAccessRuleAll(write);
+            new FileInfo(spells).SetAccessControl(restored);
+            await StatusAsync(player, HttpStatusCode.OK, "private again", Url(Release + "/DATA/Spells file.inibin"));
 
             // Never anything but a manifest entry: traversal as it reaches the wire, the files the clients wrote, the AIR folder's other
             // things, the host's data folder and certificate, a folder, another case, an absolute path; nor a POST or the host's own port.
@@ -316,18 +334,21 @@ public static class HostFileShareChecks
             var tool = Directory.CreateDirectory(Path.Combine(root, "bootstrap", "companion")).FullName;
             AirPlayerInstallChecks.WriteTool(tool, "one");
 
-            // A file the host changed after the list was made (same size, other bytes) fails the player's check, and nothing is installed.
+            // A file the host changed after the list was made (same size, other bytes) fails the player's check (batch 857: the host serves a game folder
+            // used where it is as it is, and the player hashes every file), and nothing is installed.
             var changed = expected[Release + "/DATA/file3.bin"];
             var genuine = File.ReadAllBytes(changed);
+            var written = File.GetLastWriteTimeUtc(changed);
             var bent = genuine.ToArray();
             bent[0] ^= 0x5A;
             File.WriteAllBytes(changed, bent);
             var refused = Path.Combine(root, "Refused");
-            await ThrowsAsync<InvalidDataException>(() => PlayerDownload.DownloadAsync(client, origin, offer, PlayerDownload.Plan(refused, offer), pins, Server, null,
+            await ThrowsAsync<InvalidDataException>(() => PlayerDownload.DownloadAsync(client, origin, offer, PlayerDownload.Plan(refused, offer), pins, Server, profile.LocalAppData, null,
                 CancellationToken.None), "does not match its SHA-256");
             TestAssert.False(Directory.Exists(Path.Combine(refused, "air")) || Directory.Exists(Path.Combine(refused, "game")) || File.Exists(profile.RecordPath),
                 "a refused download installs nothing");
             File.WriteAllBytes(changed, genuine);
+            File.SetLastWriteTimeUtc(changed, written);
 
             // A resume: a cut file left from before (half the game executable) continues with a range, a stray file goes, and a Cancel
             // after ten files keeps what came; the second run never fetches a finished file again.
@@ -345,7 +366,7 @@ public static class HostFileShareChecks
             using (var stop = new CancellationTokenSource())
             {
                 recorder.After = count => { if (count == 10) stop.Cancel(); };
-                await ThrowsAsync<OperationCanceledException>(() => PlayerDownload.DownloadAsync(client, origin, offer, plan, pins, Server, null, stop.Token), "");
+                await ThrowsAsync<OperationCanceledException>(() => PlayerDownload.DownloadAsync(client, origin, offer, plan, pins, Server, profile.LocalAppData, null, stop.Token), "");
                 recorder.After = null;
             }
             var firstRun = recorder.Requests.ToList();
@@ -355,7 +376,7 @@ public static class HostFileShareChecks
             TestAssert.True(finished.Count is > 0 && finished.Count < offer.Files.Count, $"the Cancel came halfway: {finished.Count} of {offer.Files.Count}");
             recorder.Requests.Clear();
             var steps = new Steps();
-            await PlayerDownload.DownloadAsync(client, origin, offer, plan, pins, Server, steps, CancellationToken.None);
+            await PlayerDownload.DownloadAsync(client, origin, offer, plan, pins, Server, profile.LocalAppData, steps, CancellationToken.None);
             var secondRun = recorder.Requests.ToList();
             TestAssert.True(firstRun.Concat(secondRun).Any(request => request.Path == "/files/" + Exe && request.From == executable.Length / 2 &&
                 request.Status == HttpStatusCode.PartialContent), "the cut executable continues with a range: " + string.Join(", ", firstRun.Concat(secondRun)));
@@ -458,7 +479,7 @@ public static class HostFileShareChecks
             TestAssert.Equal(ClassicLauncherFiles.Required.Count, launcherOnly.Files.Count, "the launcher's files alone");
             var staging = Path.Combine(install, PlayerDownload.Staging);
             ClassicLauncherChecks.WriteLauncherFiles(Path.Combine(staging, "launcher"));
-            PlayerDownload.Place(staging, plan, launcherOnly, pins, Server, null, CancellationToken.None);
+            PlayerDownload.Place(staging, plan, ClassicLauncherChecks.Staged(launcherOnly, staging), pins, Server, null, CancellationToken.None);
             TestAssert.True(File.Exists(Path.Combine(install, "launcher", "LoLLauncher.exe")), "the checked launcher is in <install>\\launcher");
             TestAssert.False(Directory.Exists(Path.Combine(staging, "launcher")), "the staged launcher was put in place");
 
@@ -467,7 +488,7 @@ public static class HostFileShareChecks
             var badStaging = Path.Combine(bad, PlayerDownload.Staging);
             ClassicLauncherChecks.WriteLauncherFiles(Path.Combine(badStaging, "launcher"));
             File.Delete(Path.Combine(badStaging, "launcher", "xml", "slideshow.xml"));
-            Throws<InstallRefusedException>(() => PlayerDownload.Place(badStaging, badPlan, launcherOnly, pins, Server, null, CancellationToken.None), "is not complete",
+            Throws<InstallRefusedException>(() => PlayerDownload.Place(badStaging, badPlan, ClassicLauncherChecks.Staged(launcherOnly, badStaging), pins, Server, null, CancellationToken.None), "is not complete",
                 "a staged launcher that fails its check");
             TestAssert.False(Directory.Exists(Path.Combine(bad, "launcher")), "nothing is placed");
         }
@@ -503,6 +524,8 @@ public static class HostFileShareChecks
         File.WriteAllText(Path.Combine(air, "notes.txt"), "the host's own file beside the AIR client");
         // Batch 761, task 8: the host's 2011 launcher folder, a dummy release whose pin is its own EXE's hash (the folder check's seam).
         var launcherSha = ClassicLauncherChecks.WriteLauncherFiles(Path.Combine(root, "host-launcher"));
+        // Batch 857: the throwaway host's files are private, as an install's are (Settings warns while others can change shared files).
+        Amberline.AirCompanion.InstallLock.Lock(root);
         return HostFolderChecks.Pins(game, air) with { LauncherSha256 = launcherSha };
     });
 

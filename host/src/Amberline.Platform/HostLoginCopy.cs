@@ -1,6 +1,5 @@
 using System.Net;
 using System.Security.AccessControl;
-using System.Security.Principal;
 using System.Text.Json;
 using Microsoft.AspNetCore.Antiforgery;
 
@@ -11,14 +10,17 @@ namespace Amberline.Platform;
 /// <c>FolderMove.HostName</c> and <c>InstallMarker</c>, and the patch the pages name. Only the 1.0.0.132 line's Program.cs passes one
 /// (its <c>PlatformLine.CopyLoginsFrom</c>, the 1.0.0.126 line's); the 1.0.0.126 line's offers no copy. Batch 856: <paramref name="RemotePort"/>,
 /// that line's default friends' port, where <see cref="HostOldShortcuts"/> answers its old shortcuts (its <c>platform.json</c> may name another).
+/// Batch 857: <paramref name="LocksFrom"/>, that line's first release whose start locks its install (<see cref="Folders.InstallLock"/>), which the
+/// pages name while its install is not locked.
 /// </summary>
-public sealed record EarlierHome(string Name, string Marker, string Patch, int RemotePort);
+public sealed record EarlierHome(string Name, string Marker, string Patch, int RemotePort, string LocksFrom);
 
 /// <summary>
 /// Where <see cref="HostLoginCopy"/> looks for the other line's install: the user's local application data (its pointer, and its data from
 /// before batch 637) and the drive of its default folder. <see cref="Nowhere"/>, every loop's default, looks nowhere, so a check never reads
 /// this PC's; only <see cref="HostMode.MainAsync"/> passes <see cref="ThisPc"/>. <paramref name="OnlyYours"/> says whether a folder's or an open
-/// file's security may be trusted (<see cref="Private(FileSystemSecurity)"/> on this PC; a check passes its own); null trusts nothing found at the drive.
+/// file's security may be trusted (<see cref="Private(FileSystemSecurity)"/> on this PC; a check passes its own); null trusts nothing found.
+/// Batch 857: it is asked on every route, the pointer's included.
 /// </summary>
 public sealed record CopyPlaces(string? LocalAppData, string? Drive, Func<FileSystemSecurity, bool>? OnlyYours = null)
 {
@@ -38,27 +40,10 @@ public sealed record CopyPlaces(string? LocalAppData, string? Drive, Func<FileSy
     /// <summary>
     /// Batch 830 (review): whether <paramref name="security"/> has this Windows user, the Administrators group or SYSTEM as its owner, and no allow
     /// entry lets anyone else write, delete or change its permissions (entries that only pass on to children are left out: each file read is
-    /// asked itself). Anything else, or not Windows, is not trusted.
+    /// asked itself). Anything else, or not Windows, is not trusted. Batch 857: the install lock's own check (<see cref="Folders.InstallLock"/>),
+    /// so a locked install passes it.
     /// </summary>
-    public static bool Private(FileSystemSecurity security)
-    {
-        if (!OperatingSystem.IsWindows()) return false;
-        try
-        {
-            using var identity = WindowsIdentity.GetCurrent();
-            SecurityIdentifier[] trusted = [identity.User!, new(WellKnownSidType.BuiltinAdministratorsSid, null), new(WellKnownSidType.LocalSystemSid, null)];
-            if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner || !trusted.Contains(owner)) return false;
-            // Write is WriteData, AppendData and the attribute writes; the two generic bits are GENERIC_WRITE and GENERIC_ALL.
-            const int Changes = (int)(FileSystemRights.Write | FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles |
-                FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership) | 0x40000000 | 0x10000000;
-            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
-                if (rule.AccessControlType == AccessControlType.Allow && !rule.PropagationFlags.HasFlag(PropagationFlags.InheritOnly) &&
-                    !(rule.IdentityReference is SecurityIdentifier who && trusted.Contains(who)) && ((int)rule.FileSystemRights & Changes) != 0)
-                    return false;
-            return true;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or SystemException) { return false; }
-    }
+    public static bool Private(FileSystemSecurity security) => Folders.InstallLock.Private(security);
 }
 
 /// <summary>
@@ -67,12 +52,12 @@ public sealed record CopyPlaces(string? LocalAppData, string? Drive, Func<FileSy
 /// Amberline on this PC, while its store holds a login this one lacks. Its install is found as that line finds it: the pointer in this user's
 /// local application data naming a folder with its marker, its default folder with the marker, then its data from before batch 637 in this
 /// user's local application data; the store is that folder's <c>data\accounts.json</c> and the host's own login there its
-/// <c>platform.json</c> <c>hostAccount</c>. Batch 830 review: any user may make a folder at the drive's root, so an install found only there
-/// counts while its folders, and each store file through the very handle it is read from, are this user's (<see cref="CopyPlaces.OnlyYours"/>);
-/// otherwise the page refuses in plain words. The install this user's own pointer names is this user's own 1.0.0.126 server and is read
-/// whatever its ACL (orchestrator's ruling: whoever can write its folder can already change that server's own logins, so reading it gives no
-/// new access, and a default <c>C:\Amberline</c> inherits the drive root's "Authenticated Users: Modify", which no install code narrows). On
-/// every route the install folder, the data folder and the store files must not be links (a reparse point or a link target). Those files are only read, opened so their Amberline could still replace them, and never while it runs (its store's lease,
+/// <c>platform.json</c> <c>hostAccount</c>. Batch 830 review: any user may make a folder at the drive's root, so an install counts while its
+/// folders, and each store file through the very handle it is read from, are this user's (<see cref="CopyPlaces.OnlyYours"/>); otherwise the page
+/// refuses in plain words. Batch 857 (design step 5, owner 17 November 2026: that line locks itself): on every route, the one this user's own
+/// pointer names included; an install that is not locked yet is told to update to <see cref="EarlierHome.LocksFrom"/> and start once, which locks
+/// it (<see cref="Folders.InstallLock"/>). This line only reads it and never changes its permissions. On every route the install folder, the data
+/// folder and the store files must not be links (a reparse point or a link target). Those files are only read, opened so their Amberline could still replace them, and never while it runs (its store's lease,
 /// <c>accounts.lock</c>, is held): then the page says so and the host tries again. What is copied is <see cref="PlatformAccounts.CopiedLogin"/>;
 /// progress stays there. Every copied login is an ordinary user: the host's own login there becomes the host's own here only once the host
 /// types its password on the own-login step (<see cref="OwnPath"/>), checked against the copied hash.
@@ -115,7 +100,7 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
 
     private string Unsafe(string folder) =>
         $"Amberline found an Amberline for {from.Patch} in {WebUtility.HtmlEncode(folder)}, but other people who use this PC can change its files, " +
-        "so Amberline does not copy its logins.";
+        $"so Amberline does not copy its logins. Update your Amberline for {from.Patch} to {from.LocksFrom} or later and start it once.";
 
     private static string Logins(int count) => count == 1 ? "1 login" : $"{count} logins";
 
@@ -191,15 +176,15 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
     /// <summary>The other line's store as it is now, or null when no install of it holds one (or it cannot be read; the log says which part failed).</summary>
     internal Found? Find()
     {
-        foreach (var (data, gated) in DataFolders())
+        foreach (var data in DataFolders())
         {
             var install = Path.GetDirectoryName(data)!;
             var store = Path.Combine(data, "accounts.json");
             if (!File.Exists(store)) continue;
             // Batch 830 review: no route reads through a link (a junction or symbolic link could point anywhere).
             if (new[] { install, data, store, Path.Combine(data, "platform.json") }.Any(Linked)) return new([], null, 0, Link(install));
-            if (gated && !(FolderYours(install) && FolderYours(data))) return new([], null, 0, Unsafe(install));
-            try { return Leased(data) ? new([], null, 0, Running) : Read(data, gated ? install : null); }
+            if (!(FolderYours(install) && FolderYours(data))) return new([], null, 0, Unsafe(install));
+            try { return Leased(data) ? new([], null, 0, Running) : Read(data, install); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or KeyNotFoundException)
             {
                 Console.Error.WriteLine($"Amberline could not read the logins of the Amberline for {from.Patch} ({ex.GetType().Name}).");
@@ -216,7 +201,7 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
         return info.Exists && (info.Attributes.HasFlag(FileAttributes.ReparsePoint) || info.LinkTarget is not null);
     }
 
-    /// <summary>Whether a folder at the drive's root may be trusted (<see cref="CopyPlaces.OnlyYours"/> on its ACL; without one, or unreadable, not).</summary>
+    /// <summary>Whether a folder of that install may be trusted (<see cref="CopyPlaces.OnlyYours"/> on its ACL; without one, or unreadable, not).</summary>
     private bool FolderYours(string folder)
     {
         if (!OperatingSystem.IsWindows() || loop.CopyFrom.OnlyYours is not { } check) return false;
@@ -237,17 +222,15 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
         "so Amberline does not copy its logins.";
 
     /// <summary>
-    /// The other line's data folders, in the order its own start would take them: the pointer's install and the one from before batch 637
-    /// (this user's own local application data: trusted as found), and between them the default folder at the drive's root, which is
-    /// <c>gated</c>: <see cref="Find"/> asks its ACLs first.
+    /// The other line's data folders, in the order its own start would take them: the pointer's install, the default folder at the drive's root,
+    /// then the one from before batch 637 in this user's local application data. Batch 857: <see cref="Find"/> asks the ACLs of each.
     /// </summary>
-    private IEnumerable<(string Data, bool Gated)> DataFolders()
+    private IEnumerable<string> DataFolders()
     {
         var local = loop.CopyFrom.LocalAppData;
-        // Orchestrator's ruling (batch 830 review): the install this user's own pointer names is this user's own server, read whatever its ACL.
-        if (local is not null && Pointer(Path.Combine(local, from.Name, "install.json"), from.Marker) is { } pointed) yield return (Path.Combine(pointed, "data"), false);
-        if (loop.CopyFrom.Drive is { } drive && File.Exists(Path.Combine(drive, from.Name, from.Marker))) yield return (Path.Combine(drive, from.Name, "data"), true);
-        if (local is not null) yield return (Path.Combine(local, from.Name, "data"), false);
+        if (local is not null && Pointer(Path.Combine(local, from.Name, "install.json"), from.Marker) is { } pointed) yield return Path.Combine(pointed, "data");
+        if (loop.CopyFrom.Drive is { } drive && File.Exists(Path.Combine(drive, from.Name, from.Marker))) yield return Path.Combine(drive, from.Name, "data");
+        if (local is not null) yield return Path.Combine(local, from.Name, "data");
     }
 
     /// <summary>The install folder the other line's pointer names while that folder holds its <paramref name="marker"/> (that line's <c>FolderMove.ReadPointer</c>).</summary>
@@ -276,15 +259,15 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
         catch (IOException) { return true; }
     }
 
-    /// <summary>The store, read; with <paramref name="gated"/> (the drive's root) each file only after its open handle passed <see cref="FileYours"/>.</summary>
-    private Found Read(string data, string? gated)
+    /// <summary>The store of the install <paramref name="install"/>, read; each file only after its open handle passed <see cref="FileYours"/>.</summary>
+    private Found Read(string data, string install)
     {
         long? hostId = null;
         var settings = Path.Combine(data, "platform.json");
         if (File.Exists(settings))
         {
             using var stream = Open(settings);
-            if (gated is not null && !FileYours(stream)) return new([], null, 0, Unsafe(gated));
+            if (!FileYours(stream)) return new([], null, 0, Unsafe(install));
             using var document = JsonDocument.Parse(stream);
             if (document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("hostAccount", out var id) &&
                 id.ValueKind == JsonValueKind.Number && id.TryGetInt64(out var value)) hostId = value;
@@ -294,7 +277,7 @@ public sealed class HostLoginCopy(HostLoop loop, PlatformAccounts accounts, Earl
         var unreadable = 0;
         using (var stream = Open(Path.Combine(data, "accounts.json")))
         {
-            if (gated is not null && !FileYours(stream)) return new([], null, 0, Unsafe(gated));
+            if (!FileYours(stream)) return new([], null, 0, Unsafe(install));
             using var document = JsonDocument.Parse(stream);
             foreach (var row in document.RootElement.GetProperty("Accounts").EnumerateArray())
             {

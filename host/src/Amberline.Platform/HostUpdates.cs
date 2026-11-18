@@ -4,7 +4,9 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Amberline.Host;
 using Microsoft.AspNetCore.Antiforgery;
 
@@ -423,7 +425,7 @@ public static class HostUpdates
 
     /// <summary>Update now while games run: the warning, and Update now again to confirm (Cancel goes back to Updates).</summary>
     private static IResult Confirm(string token, HostUpdateState state, int games, bool again) => HostMode.Page(
-        "<h1>Update Amberline now?</h1>" + (again ? "<p class=problem role=alert>A game started since this page was opened.</p>" : "") +
+        $"<h1>Update {HostPages.Product} now?</h1>" + (again ? "<p class=problem role=alert>A game started since this page was opened.</p>" : "") +
         $"<p class=warn>Updating ends the {(games == 1 ? "game" : "games")} in progress.</p>" +
         UpdateForm(token, state, games, "Update now") + " <a class=\"button secondary\" href=/host/updates>Cancel</a></div></form>",
         again ? StatusCodes.Status409Conflict : StatusCodes.Status200OK);
@@ -433,18 +435,18 @@ public static class HostUpdates
     {
         var version = WebUtility.HtmlEncode(job.Version);
         if (job.Problem is { } problem)
-            return HostMode.Page($"<h1>Amberline was not updated</h1>{HostPages.Errors((problem, null))}<p>The Amberline you have keeps running.</p>" +
+            return HostMode.Page($"<h1>{HostPages.Product} was not updated</h1>{HostPages.Errors((problem, null))}<p>The Amberline you have keeps running.</p>" +
                 "<div class=actions><a href=/host/updates>Back</a></div>");
         if (job.Started)
             return HostMode.Page($"""
-                <h1>Installing Amberline {version}</h1>
+                <h1>Installing {HostPages.Product} {version}</h1>
                 <p class=notice role=status>A new Amberline window opened (look on the taskbar). It installs Amberline {version} now.</p>
                 <p>That window stops this Amberline, installs the new one and starts it, and its page opens in your browser. Your settings and
                 users stay. If the new version does not start, the one you have comes back.</p>
                 """);
         var percent = Percent(job);
         return HostMode.Page($"""
-            <h1>Updating Amberline</h1>
+            <h1>Updating {HostPages.Product}</h1>
             <p>Keep this page and the Amberline window open.</p>
             <div aria-live=polite><p id=update-phase class=headline>{WebUtility.HtmlEncode(Phase(job))}</p></div>
             <label for=update-bar>Progress</label><progress id=update-bar max=100 value={percent}>{percent}%</progress>
@@ -460,7 +462,7 @@ public static class HostUpdates
     public static string Render(string token, (Version? Version, DateTimeOffset? Built) running, HostUpdateState state, bool saved = false)
     {
         var have = running.Version is null ? "<p>This is a development build without a version number.</p>"
-            : $"<p>You have Amberline {running.Version}" +
+            : $"<p>You have {HostPages.Product} {running.Version}" +
               (running.Built is { } built ? $" (built {built.UtcDateTime.ToString("d MMMM yyyy", CultureInfo.InvariantCulture)})" : "") + ".</p>";
         var latest = HostVersion.Parse(state.Latest);
         var update = state is { Zip: not null, Size: { } size }
@@ -470,8 +472,8 @@ public static class HostUpdates
             : "";
         // Version's operators order null first, so a development build (no version) is never "older" than a release.
         var news = latest is not null && running.Version is not null && latest > running.Version ? $"""
-            <h2>Amberline {latest} is out</h2>
-            {(state.Notes is null ? "" : $"<p class=notes>What's new: {WebUtility.HtmlEncode(state.Notes)}</p>")}
+            <h2>{HostPages.Product} {latest} is out</h2>
+            {(state.Notes is null ? "" : $"<h3>What's new</h3><div class=notes>{Notes(state.Notes)}</div>")}
             {update}
             <p><a href="{WebUtility.HtmlEncode(state.Page ?? ReleasesPage)}" target=_blank rel="noopener noreferrer">Open the download page</a></p>
             <ol><li>Download the zip and open it.</li>
@@ -493,6 +495,69 @@ public static class HostUpdates
             <p class=tip>Check now asks GitHub once. Amberline never installs anything by itself.</p>
             </form>
             """;
+    }
+
+    /// <summary>
+    /// Batch 867: the release notes (GitHub's Markdown, cut at <see cref="NotesLength"/>) in the small part of Markdown they use (the stub of
+    /// tools/build-server.ps1: headings, bullet lists and paragraphs; bold, inline code and links in a line), where the page showed the raw text
+    /// (batch 863). Each heading is an h3 under the release's h2. Every character of the notes is HTML-encoded, so no markup from them reaches the
+    /// page; a link is one only to an https address (else its text), and a mark without its end, as the cut may leave, stays as written.
+    /// </summary>
+    internal static string Notes(string markdown)
+    {
+        var html = new StringBuilder();
+        var paragraph = new List<string>();
+        var list = false;
+        void Close()
+        {
+            if (paragraph.Count > 0) html.Append("<p>").Append(Inline(string.Join(" ", paragraph))).Append("</p>");
+            paragraph.Clear();
+            if (list) html.Append("</ul>");
+            list = false;
+        }
+        foreach (var line in markdown.ReplaceLineEndings("\n").Split('\n').Select(raw => raw.Trim()))
+        {
+            if (Heading.Match(line) is { Success: true } heading)
+            {
+                Close();
+                html.Append("<h3>").Append(Inline(heading.Groups[1].Value.TrimEnd('#', ' '))).Append("</h3>");
+            }
+            else if (Bullet.Match(line) is { Success: true } item)
+            {
+                if (!list) { Close(); html.Append("<ul>"); list = true; }
+                html.Append("<li>").Append(Inline(item.Groups[1].Value)).Append("</li>");
+            }
+            else if (line.Length == 0) Close();
+            else
+            {
+                if (list) Close();
+                paragraph.Add(line);
+            }
+        }
+        Close();
+        return html.ToString();
+    }
+
+    private static readonly Regex Heading = new(@"^#{1,6}\s+(.+)$");
+    private static readonly Regex Bullet = new(@"^[-*+]\s+(.+)$");
+    private static readonly Regex Marks = new(@"`([^`]+)`|\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)\s]+)\)");
+
+    /// <summary>A line's code, bold and links; everything else HTML-encoded as it is.</summary>
+    private static string Inline(string text)
+    {
+        var html = new StringBuilder();
+        var at = 0;
+        foreach (Match mark in Marks.Matches(text))
+        {
+            html.Append(WebUtility.HtmlEncode(text[at..mark.Index])).Append(
+                mark.Groups[1].Success ? $"<code>{WebUtility.HtmlEncode(mark.Groups[1].Value)}</code>"
+                : mark.Groups[2].Success ? $"<strong>{Inline(mark.Groups[2].Value)}</strong>"
+                : Uri.TryCreate(mark.Groups[4].Value, UriKind.Absolute, out var link) && link.Scheme == Uri.UriSchemeHttps
+                    ? $"<a href=\"{WebUtility.HtmlEncode(link.AbsoluteUri)}\" target=_blank rel=\"noopener noreferrer\">{Inline(mark.Groups[3].Value)}</a>"
+                    : Inline(mark.Groups[3].Value));
+            at = mark.Index + mark.Length;
+        }
+        return html.Append(WebUtility.HtmlEncode(text[at..])).ToString();
     }
 
     private static string TickBox(string name, bool ticked) =>

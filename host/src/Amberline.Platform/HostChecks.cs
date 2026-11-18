@@ -352,7 +352,7 @@ public sealed class HostAttention : IAsyncDisposable
             var pfx = Path.Combine(_loop.Paths.Data, "remote", "host.pfx");
             File.Move(pfx, $"{pfx}.replaced-{DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}");
             context.Response.OnCompleted(() => { _loop.Restart(); return Task.CompletedTask; });
-            return HostMode.Page("<h1>Amberline is making new Play files</h1><p>This page comes back by itself.</p>", refresh: _loop.ReopenPath, nav: false);
+            return HostPages.Restarting($"<h1>{HostPages.Product} is making new Play files</h1><p>This page comes back by itself.</p>", _loop.ReopenPath);
         });
     }
 

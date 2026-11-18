@@ -307,10 +307,13 @@ While Amberline guides old 1.0.0.126 shortcuts, these lines show on the dashboar
 Amberline checks them again every 5 minutes, and when you choose **Test again**.
 
 - **Your Amberline for 1.0.0.126 was not found**. Guiding counts only the 1.0.0.126 Amberline that your Windows account
-  installed, or one in `C:\Amberline` that other people on this PC cannot change. An install whose folders or files are links does
-  not count. If you uninstalled it, choose **Stop guiding old shortcuts** on **Users**.
-- **Update your Amberline for 1.0.0.126 to 0.1.25 or later**. Old shortcuts can be offered the move only by a 1.0.0.126 Amberline
-  of version 0.1.25 or later. On its page, choose **Updates**, then **Update now**. When the update has started it, close its
+  installed, in `C:\Amberline` or the folder you chose. An install whose folders or files are links does not count. If you
+  uninstalled it, choose **Stop guiding old shortcuts** on **Users**.
+- **Update your Amberline for 1.0.0.126 to 0.1.26 or later and start it once**. Other people who use this PC can still change its
+  files: it is not locked to your Windows account yet. Its version 0.1.26 or later locks its folder when it starts. On its page,
+  choose **Updates**, then **Update now**. When the update has started it, close its window, then choose **Test again** here.
+- **Update your Amberline for 1.0.0.126 to 0.1.26 or later**. Old shortcuts can be offered the move only by a 1.0.0.126 Amberline
+  of version 0.1.26 or later. On its page, choose **Updates**, then **Update now**. When the update has started it, close its
   window, then choose **Test again** here.
 - **Close your Amberline for 1.0.0.126**. Only one of the two lines runs at a time. Close the 1.0.0.126 window. Guiding starts
   within 5 minutes, or when you choose **Test again**.

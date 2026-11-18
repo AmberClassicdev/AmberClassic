@@ -92,6 +92,13 @@ internal static class PlayerMode
         var finishing = Program.Option(args, "--finish-update") is { } previous && int.TryParse(previous, out var processId) ? processId : (int?)null;
         if (finishing is { } old) await FinishUpdateAsync(old, tool, install);
         using var status = new PlayerInstallWindow.StatusWindow(title);
+        // NOT RETAIL (batch 857): only the player's Windows account may change the install; one that could not be locked still plays. The first
+        // start after an update or a move walks the whole install: when that takes more than a moment the window says so (never silent), then
+        // the start goes on as before.
+        var locking = Task.Run(() => PlayerInstall.CheckLock(install, Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)));
+        if (!locking.Wait(TimeSpan.FromSeconds(1))) status.Show(Locking);
+        if (await locking is { } notLocked) Console.WriteLine($"install: not locked: {notLocked}");
+        status.Hide();
         return await StartAsync(install, id!, checkUpdate: finishing is null, ShortcutUi.Windows(status, title));
     }
 
@@ -141,6 +148,7 @@ internal static class PlayerMode
 
     // Batch 653: each wait says how long it takes.
     internal const string Checking = "Checking for updates. This takes a few seconds.";
+    internal const string Locking = "Checking that only your Windows account can change this install. This takes up to a minute.";
     internal const string Starting = "Starting the game client. This takes up to a minute.";
     internal const string Closing = "Closing the game client from the earlier start. This takes a few seconds.";
 

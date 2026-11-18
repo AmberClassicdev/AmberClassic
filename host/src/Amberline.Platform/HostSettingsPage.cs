@@ -129,19 +129,21 @@ public static class HostSettingsPage
             if (accounts is not null) accounts.Controls.LauncherNews = news;
             return Results.Redirect(PagePath + "?saved=news");
         });
-        app.MapGet(UninstallPath, (HttpContext context, IAntiforgery antiforgery) =>
-            UninstallPage(loop, Program.RegistrationToken(context, antiforgery), games(), null, false, false));
+        app.MapGet(UninstallPath, async (HttpContext context, IAntiforgery antiforgery) =>
+            await UninstallPageAsync(loop, Program.RegistrationToken(context, antiforgery), games(), null, false, false, context.RequestAborted));
         app.MapPost(UninstallPath, async (HttpContext context, IAntiforgery antiforgery) =>
         {
             var form = await HostSteps.FormAsync(context, antiforgery);
             var token = Program.RegistrationToken(context, antiforgery);
+            var cancel = context.RequestAborted;
             var (clients, data) = (form?["clients"].ToString() == "on", form?["data"].ToString() == "on");
-            if (form is null) return UninstallPage(loop, token, games(), (HostSteps.Expired, null), clients, data, StatusCodes.Status400BadRequest);
+            if (form is null) return await UninstallPageAsync(loop, token, games(), (HostSteps.Expired, null), clients, data, cancel, StatusCodes.Status400BadRequest);
             // A game that started since the page was opened ends the uninstall here: the host decides again on the page.
-            if (games() > 0) return UninstallPage(loop, token, games(), null, clients, data, StatusCodes.Status409Conflict);
+            if (games() > 0) return await UninstallPageAsync(loop, token, games(), null, clients, data, cancel, StatusCodes.Status409Conflict);
             if (!HostUninstall.Confirmed(form["confirm"]))
-                return UninstallPage(loop, token, 0, ($"Type {HostUninstall.ConfirmWord} in the box to confirm.", "confirm"), clients, data, StatusCodes.Status400BadRequest);
-            if (Plan(loop) is not { } plan) return UninstallPage(loop, token, 0, null, clients, data);
+                return await UninstallPageAsync(loop, token, 0, ($"Type {HostUninstall.ConfirmWord} in the box to confirm.", "confirm"), clients, data, cancel,
+                    StatusCodes.Status400BadRequest);
+            if (Plan(loop) is not { } plan) return await UninstallPageAsync(loop, token, 0, null, clients, data, cancel);
             var result = await HostUninstall.RunAsync(plan, clients, data, loop.Uninstall, loop.Network, context.RequestAborted);
             loop.Cleanup = result.Cleanup;
             loop.Screen.WriteLine("Amberline is uninstalled. This window closes by itself.");
@@ -307,24 +309,24 @@ public static class HostSettingsPage
             <section class=folder aria-labelledby=cheats-title><h2 id=cheats-title>Cheat commands</h2>
             <p>A ticked login can use them in every game it plays here. Only you can change this list.</p>
             {{cheats}}</section>
-            <section class=folder aria-labelledby=uninstall-title><h2 id=uninstall-title>Uninstall Amberline</h2>
+            <section class=folder aria-labelledby=uninstall-title><h2 id=uninstall-title>Uninstall {{HostPages.Product}}</h2>
             <p><a href={{UninstallPath}}>Uninstall Amberline</a></p></section>
             """;
     }
 
     /// <summary>
     /// The uninstall page: the install folder and its size, what goes, the two choices and the typed confirmation. A running game or a
-    /// Platform that is not installed gets the reason instead of the form.
+    /// Platform that is not installed gets the reason instead of the form. Batch 867: the firewall rules are named only while Windows Firewall
+    /// holds one of Amberline's (<see cref="HostUninstall.FirewallRulesAsync"/>); the page promised "its two rules" always (batch 863).
     /// </summary>
-    private static IResult UninstallPage(HostLoop loop, string token, int games, (string? Text, string? Field)? problem, bool clients, bool data,
-        int status = StatusCodes.Status200OK)
+    private static async Task<IResult> UninstallPageAsync(HostLoop loop, string token, int games, (string? Text, string? Field)? problem, bool clients, bool data,
+        CancellationToken cancel, int status = StatusCodes.Status200OK)
     {
-        const string Back = $"<p><a href={PagePath}>Back</a></p>";
+        const string Back = $"<p><a href={PagePath}>Back</a></p>", Heading = $"<h1>Uninstall {HostPages.Product}</h1>";
         if (Plan(loop) is not { } plan)
-            return HostMode.Page($"<h1>Uninstall Amberline</h1><p>{Encode(HostUninstall.NotInstalled(loop.Paths))}</p>{Back}", status);
+            return HostMode.Page($"{Heading}<p>{Encode(HostUninstall.NotInstalled(loop.Paths))}</p>{Back}", status);
         if (games > 0)
-            return HostMode.Page("<h1>Uninstall Amberline</h1><p class=problem role=alert>A game is running. Uninstall Amberline when it has ended.</p>" +
-                Back, status);
+            return HostMode.Page(Heading + "<p class=problem role=alert>A game is running. Uninstall Amberline when it has ended.</p>" + Back, status);
         var shown = problem ?? default;
         string Tick(string name, bool on, string text) =>
             $"<label class=choice><input type=checkbox name={name} value=on{(on ? " checked" : "")}>{text}</label>";
@@ -333,14 +335,15 @@ public static class HostSettingsPage
             (plan.Has(UninstallKind.Data)
                 ? Tick("data", data, $"Also delete your logins and settings ({HostUninstall.Size(plan.Size(UninstallKind.Data))}). " +
                     "Users' logins and Play files stop working for good.") : "");
+        var firewall = await HostUninstall.FirewallRulesAsync(loop.Network, cancel)
+            ? "<li>its Windows Firewall rules (Windows asks once, for Windows Command Processor: choose Yes)</li>" : "";
         return HostMode.Page($$"""
-            <h1>Uninstall Amberline</h1>
+            {{Heading}}
             {{HostPages.Errors(shown)}}
             <p>Amberline's folder: <b>{{Encode(plan.Folder)}}</b> ({{HostUninstall.Size(plan.Bytes)}}). Uninstalling stops Amberline and removes:</p>
-            <ul><li>the Amberline program ({{HostUninstall.Size(plan.Size(UninstallKind.Program))}}) and its desktop icon</li>
+            <ul><li>the {{HostPages.Product}} program ({{HostUninstall.Size(plan.Size(UninstallKind.Program))}}) and its desktop icon</li>
             <li>the note of where its folder is</li>
-            <li>its two Windows Firewall rules (Windows asks once, for Windows Command Processor: choose Yes)</li>
-            <li>the ports it opened on your router</li></ul>
+            {{firewall}}<li>the ports it opened on your router</li></ul>
             {{string.Concat(plan.Outside.Select(line => $"<p>{Encode(line)}.</p>"))}}
             <form method=post action={{UninstallPath}} novalidate{{HostPages.Wait("Uninstalling Amberline. If Windows asks, choose Yes.")}}>{{token}}
             {{(choices.Length == 0 ? "" : $"<fieldset><legend>What else to delete</legend>{choices}</fieldset>")}}
@@ -356,7 +359,7 @@ public static class HostSettingsPage
         static string List(string title, IReadOnlyList<string> lines) =>
             lines.Count == 0 ? "" : $"<h2>{title}</h2><ul>{string.Concat(lines.Select(line => $"<li>{Encode(line)}</li>"))}</ul>";
         return $"""
-            <h1>Amberline is uninstalled</h1>
+            <h1>{HostPages.Product} is uninstalled</h1>
             <p>Amberline has stopped; its window closes by itself.</p>
             {List("Removed", result.Done)}
             {List("Kept", result.Kept)}

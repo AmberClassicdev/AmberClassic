@@ -250,14 +250,14 @@ public static class HostUpdateNowChecks
                 TestAssert.Equal(HttpStatusCode.Redirect, checkNow.StatusCode);
             var size = HostUpdates.Read(home.Loop.Paths.Data).Size!.Value;
             var updates = await Page(browser, "/host/updates", HttpStatusCode.OK, "Updates with a newer release");
-            Has(updates, "Amberline 1.11.0 is out", $"<form method=post action={HostUpdates.InstallPath} data-wait=\"{WebUtility.HtmlEncode(HostUpdates.Downloading("1.11.0", size))}\">",
+            Has(updates, $"{HostPages.Product} 1.11.0 is out", $"<form method=post action={HostUpdates.InstallPath} data-wait=\"{WebUtility.HtmlEncode(HostUpdates.Downloading("1.11.0", size))}\">",
                 ">Update now</button>", "Open the download page");
             TestAssert.Equal(1, github.Requests.Count, "the page asked only for the latest release");
 
             // A game in progress: the warning first and a confirm; nothing is downloaded until then.
             Volatile.Write(ref games, 1);
             var confirm = await Form(browser, "/host/updates", HttpStatusCode.OK, "Update now while a game runs");
-            Has(confirm, "<h1>Update Amberline now?</h1>", "<p class=warn>Updating ends the game in progress.</p>", "<input type=hidden name=games value=1>",
+            Has(confirm, $"<h1>Update {HostPages.Product} now?</h1>", "<p class=warn>Updating ends the game in progress.</p>", "<input type=hidden name=games value=1>",
                 ">Update now</button>", ">Cancel</a>");
             Volatile.Write(ref games, 2);
             Has(await Form(browser, confirm, HttpStatusCode.Conflict, "a confirm after another game started", ("games", "1")),
@@ -270,15 +270,15 @@ public static class HostUpdateNowChecks
                 TestAssert.Equal(HostUpdates.InstallPath, go.Headers.Location?.OriginalString, "the confirm starts the update");
             var status = await StatusAsync(browser, state => state == "downloading");
             TestAssert.Equal(HostUpdates.Downloading("1.11.0", size), status.GetProperty("phase").GetString());
-            Has(await Page(browser, HostUpdates.InstallPath, HttpStatusCode.OK, "the download's page"), "<h1>Updating Amberline</h1>",
-                "<progress id=update-bar max=100", "id=update-phase", "id=update-detail", $"<script src={HostPages.ScriptPath} defer></script>");
+            Has(await Page(browser, HostUpdates.InstallPath, HttpStatusCode.OK, "the download's page"), $"<h1>Updating {HostPages.Product}</h1>",
+                "<progress id=update-bar max=100", "id=update-phase", "id=update-detail", $"<script src=\"{HostPages.ScriptHref}\" defer></script>");
             var script = await browser.GetStringAsync(HostPages.ScriptPath);
             TestAssert.True(script.Contains("fetch('/host/updates/install/status.json', { cache: 'no-store' })", StringComparison.Ordinal) &&
                 script.Contains("if (byId('update-bar')) setTimeout(update, 1000);", StringComparison.Ordinal), "page.js follows the download: " + script);
             github.Hold.SetResult();
             await StatusAsync(browser, state => state == "started");
             var installing = await Page(browser, HostUpdates.InstallPath, HttpStatusCode.OK, "the started update");
-            Has(installing, "<h1>Installing Amberline 1.11.0</h1>", "It installs Amberline 1.11.0 now.", "the one you have comes back.");
+            Has(installing, $"<h1>Installing {HostPages.Product} 1.11.0</h1>", "It installs Amberline 1.11.0 now.", "the one you have comes back.");
             TestAssert.False(installing.Contains("Enter", StringComparison.Ordinal), "one click: the page asks for nothing more: " + installing);
             lock (started)
                 TestAssert.Equal(Path.Combine(HostUpdates.UpdatesFolder(home.Loop.Paths.Data), "Amberline-1.11.0", "Start Amberline.cmd") + " " +
@@ -291,7 +291,7 @@ public static class HostUpdateNowChecks
             using (var again = await PostAsync(browser, HostUpdates.InstallPath, "/host/updates"))
                 TestAssert.Equal(HostUpdates.InstallPath, again.Headers.Location?.OriginalString, "no game: Update now starts at once");
             await StatusAsync(browser, state => state == "failed");
-            Has(await Page(browser, HostUpdates.InstallPath, HttpStatusCode.OK, "the failed update"), "<h1>Amberline was not updated</h1>",
+            Has(await Page(browser, HostUpdates.InstallPath, HttpStatusCode.OK, "the failed update"), $"<h1>{HostPages.Product} was not updated</h1>",
                 WebUtility.HtmlEncode(HostUpdates.WrongHash), "The Amberline you have keeps running.", "<a href=/host/updates>Back</a>");
             lock (started) TestAssert.Equal(1, started.Count, "a failed update starts nothing");
             TestAssert.False(Directory.Exists(HostUpdates.UpdatesFolder(home.Loop.Paths.Data)), "and leaves nothing in the data folder");

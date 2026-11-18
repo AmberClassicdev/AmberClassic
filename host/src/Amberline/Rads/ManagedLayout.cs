@@ -43,7 +43,9 @@ public static class ManagedLayout
     /// <param name="Parallelism">Deflate threads; 0 = all cores.</param>
     /// <param name="DryRun">Decide and report (<see cref="Outcome.Planned"/> for "would build") without writing anything, not even the RADS root or the lock.</param>
     /// <param name="GameRunning">A game is running now: it may have the archives open, so a stale layout is only taken out of use (manifest removed, which protects the next game) and the rebuild waits for the next start.</param>
-    public sealed record EnsureOptions(Func<string, long>? FreeBytes = null, int Parallelism = 0, int BatchMegabytes = 128, bool DryRun = false, bool GameRunning = false);
+    /// <param name="PrepareRoot">Batch 857 re-review 2 (MEDIUM 2): makes the root, or says why it is not used (path-free), before anything is written; then the layout is skipped. The companion's locks the root (GameManagedLayout).</param>
+    public sealed record EnsureOptions(Func<string, long>? FreeBytes = null, int Parallelism = 0, int BatchMegabytes = 128, bool DryRun = false, bool GameRunning = false,
+        Func<string, string?>? PrepareRoot = null);
 
     /// <summary>
     /// Reads the game folder the way rads.dll reads its current directory (RuntimeEnvironment 0x100781F0, name and version 0x10077D20): backslashes become
@@ -97,6 +99,7 @@ public static class ManagedLayout
         {
             if (!options.DryRun)
             {
+                if (options.PrepareRoot?.Invoke(root) is { } refused) return new(Outcome.Skipped, refused);
                 Directory.CreateDirectory(root);
                 try { gate = new FileStream(Path.Combine(root, LockName), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
                 catch (IOException) { return new(Outcome.Skipped, "another build is running"); }
@@ -208,11 +211,16 @@ public static class ManagedLayout
         }
     }
 
-    /// <summary>Deletes a directory tree including read-only files (the archives are read-only on purpose).</summary>
+    /// <summary>
+    /// Deletes a directory tree including read-only files (the archives are read-only on purpose). Batch 857 re-review 2 (MEDIUM 2): never into a
+    /// junction or another link (the walk skips them; the delete removes a link as a link), and a link given as the tree itself is refused.
+    /// </summary>
     public static void DeleteTree(string path)
     {
         if (!Directory.Exists(path)) return;
-        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)) File.SetAttributes(file, FileAttributes.Normal);
+        if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new IOException($"{path} is a link, so it is not deleted.");
+        foreach (var file in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+            File.SetAttributes(file, FileAttributes.Normal);
         Directory.Delete(path, recursive: true);
     }
 }

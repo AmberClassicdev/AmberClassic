@@ -434,7 +434,7 @@ public sealed class HostSteps
     };
 
     private const string Welcome = $"""
-        <h1>Welcome to Amberline</h1>
+        <h1>Welcome to {HostPages.Product}</h1>
         <p>Host the {RetailClients.Year} game for your players on this PC.</p>
         """;
 

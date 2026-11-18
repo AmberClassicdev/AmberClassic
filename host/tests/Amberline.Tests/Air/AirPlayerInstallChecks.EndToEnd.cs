@@ -66,7 +66,7 @@ public static partial class AirPlayerInstallChecks
             var loop = new Amberline.Platform.HostLoop(paths, _ => { }, TextWriter.Null)
                 { CopyFrom = new Amberline.Platform.CopyPlaces(Path.Combine(pc, "Local"), Path.Combine(pc, "C"), _ => true) };
             using var accounts = new Amberline.Platform.PlatformAccounts(paths.Data);
-            var from = new Amberline.Platform.EarlierHome(name, marker, "1.0.0.126", oldPort);
+            var from = new Amberline.Platform.EarlierHome(name, marker, "1.0.0.126", oldPort, "0.1.26");
             await using var standIn = new Amberline.Platform.HostOldShortcuts(loop, from, new Amberline.Platform.HostLoginCopy(loop, accounts, from), "127.0.0.1",
                 port132, pin132) { PlayerFolder = folder132 };
             await standIn.RefreshAsync(CancellationToken.None);

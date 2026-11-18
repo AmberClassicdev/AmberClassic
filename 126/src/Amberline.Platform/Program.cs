@@ -201,6 +201,8 @@ public static class Program
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
         // Store entry grants are credentials in URLs. ASP.NET Core's own lines only from Warning up (batch 643: a line per request and
         // result filled the log, and so the support log's last lines); the antiforgery notice about the pages' no-store header is no news.
+        // Batch 867: the console (the log file) alone, never the Windows event log (HostMode.ConsoleOnly).
+        builder.Logging.ConsoleOnly();
         builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.Logging.AddFilter("Microsoft.AspNetCore.Antiforgery", LogLevel.Error);
         builder.WebHost.ConfigureKestrel(o =>

@@ -509,8 +509,8 @@ public static class HostFolders
             HostMode.Change(loop.Paths.Settings, saved => saved with { DataRoot = game.Folder!, AirRoot = air.Folder, LauncherRoot = launcher.Folder, ServerExecutable = null! });
             context.Response.OnCompleted(() => { loop.Restart(); return Task.CompletedTask; });
             // Batch 649: Settings' folders come back to Settings with a notice; setup's come back to the first-run steps, as before.
-            return HostMode.Page("<h1>Starting Amberline</h1><p>This page comes back by itself in a few seconds.</p>",
-                refresh: place.Games is null ? loop.ReopenPath : loop.ReopenPathTo("settings"), nav: false);
+            return HostPages.Restarting($"<h1>Starting {HostPages.Product}</h1><p>This page comes back by itself in a few seconds.</p>",
+                place.Games is null ? loop.ReopenPath : loop.ReopenPathTo("settings"));
         });
     }
 

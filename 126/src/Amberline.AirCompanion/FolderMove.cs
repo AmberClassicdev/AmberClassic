@@ -408,7 +408,11 @@ internal static class FolderMove
         try
         {
             if (!Directory.Exists(path)) return true;
-            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)) File.SetAttributes(file, FileAttributes.Normal);
+            // Batch 857 re-review 2 (LOW 3): a link given as the tree is refused; its target is never walked.
+            if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) return false;
+            // Batch 857 review: never into a junction or another link (a recursive enumeration would follow it into another folder).
+            foreach (var file in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+                File.SetAttributes(file, FileAttributes.Normal);
             Directory.Delete(path, recursive: true);
             return true;
         }

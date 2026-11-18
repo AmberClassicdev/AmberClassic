@@ -256,10 +256,12 @@ internal sealed class HostFolderCopy(HostLoop loop, string install, HostFolders.
         try
         {
             (copy.Inside, copy.InsideAir) = (plan.Game, plan.Air);
-            var lines = plan.Finish(leftovers, loop.Paths.Settings);
+            var lines = plan.Finish(leftovers, loop.Paths);
             var (launcher, note) = ClientPlan.PlaceZipLauncher(zipLauncher, install, loop.Folders.LauncherSha256, loop.Paths.Settings);
             if (launcher is not null) copy.Launcher = launcher;
             copy.Lines = note is null ? lines : [.. lines, note];
+            // NOT RETAIL (batch 857): the folders moved in took the install's lock and its record went (Finish); Status checks the install again.
+            loop.CheckLock();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

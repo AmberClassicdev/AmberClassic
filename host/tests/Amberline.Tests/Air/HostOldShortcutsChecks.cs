@@ -25,7 +25,8 @@ public static class HostOldShortcutsChecks
 {
     private const string OldPassword = "Synthetic-old-Pw-856";
     private const string Guided = "Old 1.0.0.126 shortcuts are guided here", NotFound = "Your Amberline for 1.0.0.126 was not found",
-        Update = "Update your Amberline for 1.0.0.126 to 0.1.25 or later", Allow = "Allow it through Windows Firewall";
+        Update = "Update your Amberline for 1.0.0.126 to 0.1.26 or later", Allow = "Allow it through Windows Firewall",
+        NotLocked = "Update your Amberline for 1.0.0.126 to 0.1.26 or later and start it once";
 
     /// <summary>
     /// The stand-in's trust and gates, driven directly (no Platform): off while guiding is off; runs on the files of the install this user's pointer
@@ -60,7 +61,7 @@ public static class HostOldShortcutsChecks
             Directory.CreateDirectory(paths.Data);
             var loop = new HostLoop(paths, _ => { }, TextWriter.Null) { CopyFrom = new CopyPlaces(Path.Combine(pc, "Local"), Path.Combine(pc, "C"), _ => true) };
             using var accounts = new PlatformAccounts(paths.Data);
-            var from = new EarlierHome(name, marker, "1.0.0.126", RemotePort: lineDefault);
+            var from = new EarlierHome(name, marker, "1.0.0.126", RemotePort: lineDefault, LocksFrom: "0.1.26");
             var copy = new HostLoginCopy(loop, accounts, from);
             const string Pin132 = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
             async Task<(bool Running, string Text)?> TryAsync(Action<HostOldShortcuts>? arrange = null, Func<HostOldShortcuts, Task>? whileOn = null)
@@ -168,12 +169,26 @@ public static class HostOldShortcutsChecks
             File.Delete(tool);
             File.Move(tool + ".away", tool);
 
+            // Batch 857 (design step 5, route (b)): the install this user's pointer names is trusted only once it is locked. Open to the drive's users,
+            // the reason says what to do; locked as that line's own start locks it (the same InstallLock), it is guided, and this line changes none of
+            // its permissions.
+            loop.CopyFrom = new CopyPlaces(Path.Combine(pc, "Local"), Path.Combine(pc, "C"), _ => false);
+            TestAssert.Equal((false, NotLocked), await TryAsync(), "the pointer's install, not locked");
+            InstallLockChecks.Hazard(Path.Combine(pc, "C"));
+            loop.CopyFrom = new CopyPlaces(Path.Combine(pc, "Local"), Path.Combine(pc, "C"), CopyPlaces.Private);
+            TestAssert.Equal((false, NotLocked), await TryAsync(), "the pointer's install, open to the drive's users: not locked");
+            TestAssert.Equal(null, Amberline.AirCompanion.InstallLock.Lock(install, top: pc), "the 1.0.0.126 start's own lock");
+            var lockedSddl = InstallLockChecks.Sddl(install);
+            TestAssert.Equal((true, Guided), await TryAsync(), "the pointer's install, locked: guided");
+            TestAssert.Equal(lockedSddl, InstallLockChecks.Sddl(install), "this line changed no permission of the 1.0.0.126 install");
+            loop.CopyFrom = new CopyPlaces(Path.Combine(pc, "Local"), Path.Combine(pc, "C"), _ => true);
+
             // The default folder at the drive's root (no pointer of this user's): only while each folder and, on its handle, each file is this user's.
             File.Move(pointer, pointer + ".away");
             var asked = 0;
             var trusted = false;
             loop.CopyFrom = new CopyPlaces(Path.Combine(pc, "Local"), Path.Combine(pc, "C"), _ => { Interlocked.Increment(ref asked); return trusted; });
-            TestAssert.Equal((false, NotFound), await TryAsync(), "the drive's root, changeable by others: not found");
+            TestAssert.Equal((false, NotLocked), await TryAsync(), "the drive's root, changeable by others: not locked");
             trusted = true;
             Interlocked.Exchange(ref asked, 0);
             TestAssert.Equal((true, Guided), await TryAsync(), "the drive's root, this user's alone: guided");
@@ -209,10 +224,10 @@ public static class HostOldShortcutsChecks
                     return writable;
                 }
                 new FileInfo(key).SetAccessControl(Writable());
-                TestAssert.Equal((false, NotFound), await TryAsync(), "a key Users may write: not found");
+                TestAssert.Equal((false, NotLocked), await TryAsync(), "a key Users may write: not locked");
                 new FileInfo(key).SetAccessControl(HostLoginCopyChecks.PrivateTo<FileSecurity>(identity.User!));
                 new FileInfo(tool).SetAccessControl(Writable());
-                TestAssert.Equal((false, NotFound), await TryAsync(), "a tool Users may write: not found");
+                TestAssert.Equal((false, NotLocked), await TryAsync(), "a tool Users may write: not locked");
                 new FileInfo(tool).SetAccessControl(HostLoginCopyChecks.PrivateTo<FileSecurity>(identity.User!));
             }
             File.Move(pointer + ".away", pointer);

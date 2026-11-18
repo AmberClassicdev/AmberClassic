@@ -48,7 +48,8 @@ public sealed class HostPlay(Func<ProcessStartInfo, Process?> start)
         };
         // NOT RETAIL (batch 761, task 8, design §9): the host's own Play takes the classic start with the host's 2011 launcher, but only while that folder
         // holds the accepted files. Otherwise the stage names no launcher at all, and the usual start runs.
-        if (settings.LauncherRoot is { } launcher && ClassicLauncherFiles.Problem(launcher, launcherSha256) is null)
+        // Batch 857 review: never the folder beside the install that Amberline did not put there or cannot lock (HostMode.UsableLauncher).
+        if (HostMode.UsableLauncher(settings.LauncherRoot, paths) is { } launcher && ClassicLauncherFiles.Problem(launcher, launcherSha256) is null)
             values["launcherRoot"] = Path.GetFullPath(launcher);
         HostFiles.Write(Path.Combine(stage, "stage.json"), values);
         return stage;

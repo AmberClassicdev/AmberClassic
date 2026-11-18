@@ -62,6 +62,8 @@ public static class HomeReleaseLineChecks
         Expect(own.Marker, FolderMove.InstallMarker, "FolderMove.InstallMarker");
         Expect(@"C:\" + own.HomeName, HostInstall.DefaultFolder, "HostInstall.DefaultFolder");
         Expect(own.HomeName + ".lnk", HostInstall.ShortcutName, "HostInstall.ShortcutName");
+        // Batch 867: the name the host's pages give the product (the wordmark, the titles, the headings), as its icon is named.
+        Expect(own.HomeName, HostPages.Product, "HostPages.Product");
         Expect(own.HomeName + " sign-in", HostFirewall.SignInRule, "HostFirewall.SignInRule");
         Expect(own.HomeName + " games", HostFirewall.GamesRule, "HostFirewall.GamesRule");
         Expect(Path.Combine("local", own.HomeName, "install.json"), FolderMove.PointerPath("local"), "FolderMove.PointerPath");

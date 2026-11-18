@@ -292,6 +292,12 @@ After a restart the page comes back by itself; after a stop, start Amberline aga
 4. **Your router has a public internet address** (no second router, no shared provider address).
 5. **A player reached Amberline from the internet**. Until then: **Waiting for the first player to start the Play file.**
 
+Below them, an installed Amberline adds **Only your Windows account can change this install**. Amberline locks its install folder so
+that other Windows accounts on this PC cannot change its files: the folder's **Security** tab (in its **Properties**) then lists only
+you, SYSTEM and Administrators. If it could not, the line says why, for example a folder another Windows account made, or a drive
+without Windows permissions (FAT32 or exFAT). This line never stops the server and is not about players joining. The first start
+after an update checks the whole folder, which takes up to a minute.
+
 A line that is not green says what is wrong, and the same problem is listed under **Needs your attention**. Players can join when
 Windows Firewall lets them in, and either your router opened the ports and has a public address, or a player from the internet
 already reached Amberline (for example because you opened the ports by hand).
@@ -612,9 +618,10 @@ its icon, its logins and everything else) stays as it is and keeps working.
 
 - **Copy the logins**: on the setup page's [step 3](#step-3-of-4-your-own-login), and on [Users](#users) while a login there is not
   here yet, Amberline offers **Copy the logins from your Amberline for 1.0.0.126: N logins found**. It finds the Amberline that your
-  Windows account installed (in `C:\Amberline` or the folder you chose) and only reads its files. An Amberline in `C:\Amberline` that
-  your account did not install counts only while other people who use this PC cannot change its files, and no install counts whose
-  folders or files are links to another place; otherwise the page says so and copies nothing.
+  Windows account installed (in `C:\Amberline` or the folder you chose) and only reads its files: it never changes them or who may
+  change them. That Amberline counts only once it is locked to your Windows account, so that other people who use this PC cannot
+  change its files: update it to 0.1.26 or later and start it once, and that start locks its folder. Until then, and for an install
+  whose folders or files are links to another place, the page says what to do and copies nothing.
 - **What is copied**: each login's username, summoner name and password (your users keep logging in with the password they have),
   whether it starts at level 30 with everything unlocked or at level 1, and the **Signed up** and **Disabled** marks. Every copied
   login is a user. Your own login there becomes your own login here once you type its password on the setup page's step 3.
@@ -638,8 +645,9 @@ server, and the user signs in with the same username and password. While your Am
 has a section named **Old 1.0.0.126 shortcuts**. Its button, **Move my 1.0.0.126 players here**, copies the logins that are not here
 yet, then turns guiding on.
 
-1. Keep your 1.0.0.126 Amberline installed, updated to 0.1.25 or later, and closed. It never needs to run. Leave it in its folder
-   (`C:\Amberline` unless you chose another).
+1. Keep your 1.0.0.126 Amberline installed, updated to 0.1.26 or later, and closed. After updating, start it once and close it again:
+   that start locks its folder to your Windows account, and guiding needs that lock. After that it never needs to run. Leave it in its
+   folder (`C:\Amberline` unless you chose another).
 2. Keep this Amberline running. Guiding works only while it runs. Once it is on, guiding stays on when you restart Amberline,
    until you press **Stop guiding old shortcuts**.
 3. Press **Move my 1.0.0.126 players here**. If the copy is refused, guiding stays off and the page says why. A copy is refused, for

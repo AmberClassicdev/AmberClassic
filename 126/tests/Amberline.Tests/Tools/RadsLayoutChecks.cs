@@ -211,4 +211,60 @@ public static class RadsLayoutChecks
             if (Directory.Exists(temp)) ManagedLayout.DeleteTree(temp);
         }
     }
+
+    /// <summary>
+    /// Batch 857 re-review 2 (MEDIUM 2). Under a parent whose children inherit "Authenticated Users: Modify" (as c:\rads would from C:\): the first
+    /// start makes the managed layout's root locked to this user and marked, and the classic start then accepts that root, also while a build holds
+    /// its lock file and stage. A root that is already there and open is skipped with a path-free line, and nothing is written into it. The tree
+    /// removal refuses a junction given as the tree and leaves what it leads to alone.
+    /// </summary>
+    [Check("server.air-managed-layout-locked-root")]
+    public static void TheFirstStartLocksTheRootTheClassicStartTakes()
+    {
+        var temp = Amberline.Tests.Air.InstallLockChecks.Hazard(Path.Combine(Path.GetTempPath(), "amberline-b857-rads-" + Guid.NewGuid().ToString("N")));
+        var link = Path.Combine(temp, "link");
+        try
+        {
+            var game = Path.Combine(temp, "projects", "lol_game_client", "releases", "0.0.0.51");
+            Directory.CreateDirectory(Path.Combine(game, "DATA"));
+            File.WriteAllBytes(Path.Combine(game, "DATA", "a.bin"), Enumerable.Repeat((byte)1, 1000).ToArray());
+            var root = Path.Combine(temp, "rads");
+            var notices = new List<string>();
+            var line = Amberline.AirCompanion.GameManagedLayout.Start(game, _ => { }, root, gameRunning: false, notice: notices.Add).GetAwaiter().GetResult();
+            TestAssert.True(line.StartsWith("managed-layout: built 1 files", StringComparison.Ordinal) && notices.Count == 0, $"{line} | {string.Join(" | ", notices)}");
+            TestAssert.True(File.Exists(Path.Combine(root, Amberline.AirCompanion.ClassicLauncherLayout.RootMarker)) &&
+                new DirectoryInfo(root).GetAccessControl().AreAccessRulesProtected && Amberline.AirCompanion.InstallLock.Inspect(root, null) is null,
+                "the root is made locked and marked, and what the build wrote is private");
+            TestAssert.Equal<string?>(null, Amberline.AirCompanion.ClassicLauncherLayout.RootRefusal(root, null), "the classic start takes that root");
+            using (new FileStream(Path.Combine(root, ManagedLayout.LockName), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose))
+            {
+                File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(root, ManagedLayout.StagePrefix + "running")).FullName, "part"), "x");
+                TestAssert.Equal<string?>(null, Amberline.AirCompanion.ClassicLauncherLayout.RootRefusal(root, null), "also while a build holds its lock and stage");
+            }
+            ManagedLayout.DeleteTree(Path.Combine(root, ManagedLayout.StagePrefix + "running"));
+
+            var open = Directory.CreateDirectory(Path.Combine(temp, "rads-open")).FullName;
+            var before = Amberline.Tests.Air.InstallLockChecks.Sddl(open);
+            var task = Amberline.AirCompanion.GameManagedLayout.Start(game, _ => { }, open, gameRunning: false, notice: notices.Add);
+            // Re-review 3: the player is told before the start goes on, with the classic start's own sentence.
+            TestAssert.True(notices.Count == 1 && notices[0].StartsWith("The game's file layout was not updated: ", StringComparison.Ordinal) &&
+                notices[0].EndsWith($"Delete the folder {open}; Amberline then lays it out again, locked to your Windows account, at the next start.", StringComparison.Ordinal),
+                $"the notice: {string.Join(" | ", notices)}");
+            var skipped = task.GetAwaiter().GetResult();
+            TestAssert.True(skipped.StartsWith("managed-layout: skipped (the RADS root is not locked to your Windows account", StringComparison.Ordinal) &&
+                !skipped.Contains(temp, StringComparison.OrdinalIgnoreCase), $"an open root is skipped, and the line holds no path: {skipped}");
+            TestAssert.True(Directory.GetFileSystemEntries(open).Length == 0 && Amberline.Tests.Air.InstallLockChecks.Sddl(open) == before, "nothing is written into it");
+
+            Amberline.Tests.Air.HostLoginCopyChecks.Junction(link, game);
+            File.SetAttributes(Path.Combine(game, "DATA", "a.bin"), FileAttributes.ReadOnly);
+            try { ManagedLayout.DeleteTree(link); throw new InvalidOperationException("a tree that is a link was not refused"); }
+            catch (IOException) { }
+            TestAssert.True(Directory.Exists(link) && File.GetAttributes(Path.Combine(game, "DATA", "a.bin")).HasFlag(FileAttributes.ReadOnly), "the link and what it leads to are untouched");
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link);
+            if (Directory.Exists(temp)) ManagedLayout.DeleteTree(temp);
+        }
+    }
 }

@@ -126,7 +126,7 @@ public static class HostInstallChecks
                 TestAssert.Equal(HttpStatusCode.BadRequest, unconfirmed.StatusCode, "a stop needs the confirmation form's token");
             // Setup mode's Stop has the dashboard's shape. Showing it makes the page's form-key ring, which then stays as it is.
             var ask = await client.GetStringAsync(HostInstall.StopPath);
-            TestAssert.True(ask.Contains("Stop Amberline?", StringComparison.Ordinal) &&
+            TestAssert.True(ask.Contains($"Stop {HostPages.Product}?", StringComparison.Ordinal) &&
                 ask.Contains("<input type=hidden name=games value=0>", StringComparison.Ordinal), ask);
             await HostModeChecks.WaitForHealthAsync(client, "setup", run);
             before = Snapshot(data);
@@ -297,16 +297,32 @@ public static class HostInstallChecks
 
             // The page says what the check found, in plain words, with the download page and the steps; it never offers a download.
             var page = HostUpdates.Render("", HostVersion.Read(app), found);
-            foreach (var phrase in new[] { "You have Amberline 1.10.0 (built 2 November 2026).", "Amberline 1.11.0 is out", "Open the download page",
+            foreach (var phrase in new[] { $"You have {HostPages.Product} 1.10.0 (built 2 November 2026).", $"{HostPages.Product} 1.11.0 is out", "Open the download page",
                          $"href=\"https://github.com/Amberline-Dev/Project-Amberline/releases/tag/{tag}\"", "&lt;b&gt;Faster&lt;/b&gt; games",
                          "Double-click Start Amberline. Your settings and users stay.", HostUpdates.Notice, "Check now" })
                 TestAssert.True(page.Contains(phrase, StringComparison.Ordinal), $"the page does not say {phrase}: {page}");
             TestAssert.False(page.Contains("<b>Faster", StringComparison.Ordinal), "the release text is shown as text");
+            // Batch 867: the notes' Markdown as the page shows it (batch 863 saw the raw text): headings, a list, bold, code and an https link, every
+            // character encoded first; a link to another scheme is its text only, and a mark the 600-character cut left open stays as written.
+            var notes = HostUpdates.Render("", HostVersion.Read(app), found with
+            {
+                Notes = "# Amberline 1.11.0\r\n\nBuilt from **source** `abc123`.\n\n## What changed\n\n- Faster <b>games</b>\n" +
+                        "- See [the page](https://github.com/Amberline-Dev/Project-Amberline/releases) or [this](javascript:void)\n* **bold `code`** too\n\nCut **here...",
+            });
+            foreach (var phrase in new[]
+                     {
+                         "<h3>What's new</h3><div class=notes><h3>Amberline 1.11.0</h3><p>Built from <strong>source</strong> <code>abc123</code>.</p><h3>What changed</h3>",
+                         "<ul><li>Faster &lt;b&gt;games&lt;/b&gt;</li><li>See <a href=\"https://github.com/Amberline-Dev/Project-Amberline/releases\" target=_blank " +
+                         "rel=\"noopener noreferrer\">the page</a> or this</li><li><strong>bold <code>code</code></strong> too</li></ul><p>Cut **here...</p></div>",
+                     })
+                TestAssert.True(notes.Contains(phrase, StringComparison.Ordinal), $"the notes render <{phrase}>: {notes}");
+            TestAssert.False(notes.Contains("<b>", StringComparison.Ordinal) || notes.Contains("javascript:", StringComparison.Ordinal),
+                "no markup and no other link from the notes: " + notes);
             var newest = HostUpdates.Render("", (new Version(1, 11, 0), null), found);
             TestAssert.True(newest.Contains("This is the newest Amberline", StringComparison.Ordinal) &&
-                !newest.Contains("Amberline 1.11.0 is out", StringComparison.Ordinal), newest);
+                !newest.Contains($"{HostPages.Product} 1.11.0 is out", StringComparison.Ordinal), newest);
             var dev = HostUpdates.Render("", (null, null), found);
-            TestAssert.True(dev.Contains("development build", StringComparison.Ordinal) && !dev.Contains("Amberline 1.11.0 is out", StringComparison.Ordinal), dev);
+            TestAssert.True(dev.Contains("development build", StringComparison.Ordinal) && !dev.Contains($"{HostPages.Product} 1.11.0 is out", StringComparison.Ordinal), dev);
             TestAssert.True(HostUpdates.SetupQuestion(true).Contains(" checked", StringComparison.Ordinal), "the first run's question is ticked");
             TestAssert.False(HostUpdates.SetupQuestion(false).Contains(" checked", StringComparison.Ordinal), "a no is kept");
         }

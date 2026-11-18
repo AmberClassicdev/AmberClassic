@@ -277,6 +277,12 @@ After a restart the page comes back by itself; after a stop, start Amberline aga
 4. **Your router has a public internet address** (no second router, no shared provider address).
 5. **A player reached Amberline from the internet**. Until then: **Waiting for the first player to start the Play file.**
 
+Below them, an installed Amberline adds **Only your Windows account can change this install**. Amberline locks its install folder so
+that other Windows accounts on this PC cannot change its files: the folder's **Security** tab (in its **Properties**) then lists only
+you, SYSTEM and Administrators. If it could not, the line says why, for example a folder another Windows account made, or a drive
+without Windows permissions (FAT32 or exFAT). This line never stops the server and is not about players joining. The first start
+after an update checks the whole folder, which takes up to a minute.
+
 A line that is not green says what is wrong, and the same problem is listed under **Needs your attention**. Players can join when
 Windows Firewall lets them in, and either your router opened the ports and has a public address, or a player from the internet
 already reached Amberline (for example because you opened the ports by hand).
@@ -535,7 +541,7 @@ A zip with an older version than yours changes nothing. If you installed with `S
 newest code and double-click `START-HERE.cmd` again; it names your version and this download's and offers to update. If yours
 is a release, a build made there changes nothing. Your players' tool updates itself the next time they start the game.
 
-If you later move this server to patch 1.0.0.132, your players' old desktop icons offer to set up the new version, with the same username and password. Keep this Amberline installed, updated to 0.1.25 or later, and closed while the 1.0.0.132 one runs. The steps are in the [1.0.0.132 guide](132/HOSTING.md#moving-from-the-100126-line).
+If you later move this server to patch 1.0.0.132, your players' old desktop icons offer to set up the new version, with the same username and password. Keep this Amberline installed, updated to 0.1.26 or later, and closed while the 1.0.0.132 one runs. After updating, start it once: that start locks its folder to your Windows account, and the 1.0.0.132 Amberline reads only a locked one. The steps are in the [1.0.0.132 guide](132/HOSTING.md#moving-from-the-100126-line).
 
 ## Play on this PC
 

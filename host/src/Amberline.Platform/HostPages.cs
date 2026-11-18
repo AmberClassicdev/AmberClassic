@@ -18,6 +18,13 @@ public static class HostPages
     public const string StylePath = "/host/style.css";
 
     /// <summary>
+    /// Batch 867: the product's name on the pages (the shell's wordmark, title and footer, and the headings that name it): the line's home name
+    /// (<see cref="Folders.FolderMove.HostName"/>, patch.json home.name), "Amberline" on 1.0.0.126 and "Amberline 132" on 1.0.0.132, as its
+    /// desktop icon, folder and release zip are named (batch 828). Before, every 1.0.0.132 page said "Amberline" (batch 863).
+    /// </summary>
+    public const string Product = Folders.FolderMove.HostName;
+
+    /// <summary>
     /// The stylesheet's address on the pages: <see cref="StylePath"/> with its content's hash. The browser keeps it (batch 643), so the
     /// pages shown as Amberline restarts or stops, whose listener may already be closed, still have it; a changed stylesheet is a new address.
     /// </summary>
@@ -25,6 +32,12 @@ public static class HostPages
 
     /// <summary>The script every shelled page loads (<see cref="Script"/>): the dashboard's status, Copy, and the wait feedback (batch 652).</summary>
     public const string ScriptPath = "/host/page.js";
+
+    /// <summary>
+    /// Batch 867: the script's address on the pages, versioned and kept by the browser as the stylesheet is (<see cref="StyleHref"/>), so a
+    /// restarting page runs it although the stopping process may no longer answer when the page asks for it.
+    /// </summary>
+    public static readonly string ScriptHref = Versioned(ScriptPath, Script);
 
     /// <summary>
     /// The policy of setup mode's pages: this origin's stylesheet and <see cref="ScriptPath"/>, nothing inline. Batch 652: the script
@@ -77,7 +90,7 @@ public static class HostPages
             }
         });
         app.MapGet(StylePath, Stylesheet);
-        app.MapGet(ScriptPath, () => Results.Text(Script, "text/javascript; charset=utf-8"));
+        app.MapGet(ScriptPath, (HttpContext context) => Kept(context, Script, "text/javascript; charset=utf-8"));
     }
 
     /// <summary>
@@ -88,6 +101,14 @@ public static class HostPages
     internal static string Wait(string sentence) => $" data-wait=\"{WebUtility.HtmlEncode(sentence)}\"";
 
     internal static IResult Page(string content, int status, string? refresh, int step, bool nav) => new Rendered(content, status, refresh, step, nav, false);
+
+    /// <summary>
+    /// Batch 867: the page shown while Amberline restarts (no links), which goes to <paramref name="reopen"/> (<see cref="HostLoop.ReopenPath"/>) once
+    /// the new process answers: <see cref="Script"/> asks <c>/health</c> every second, so the browser never lands on its own "can't be reached"
+    /// page, as the 5-second refresh did while the new process was still starting (batch 863). That refresh stays for a browser without
+    /// scripts. The page has the script policy with <c>connect-src 'self'</c> (<see cref="HostDashboard.Policy"/>), setup mode's folder step too.
+    /// </summary>
+    internal static IResult Restarting(string content, string reopen) => new Rendered(content, StatusCodes.Status200OK, null, 0, false, false, Reopen: reopen);
 
     /// <summary>
     /// Batch 656: the stylesheet's address on the friends' port's sign-up page (<see cref="HostSelfRegistration"/>): the same sheet and
@@ -106,15 +127,16 @@ public static class HostPages
         path + "?v=" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(css)))[..12].ToLowerInvariant();
 
     /// <summary>The host pages' stylesheet, at <see cref="StylePath"/>; the browser keeps it (see <see cref="StyleHref"/>).</summary>
-    internal static IResult Stylesheet(HttpContext context) => Sheet(context, Css);
+    internal static IResult Stylesheet(HttpContext context) => Kept(context, Css);
 
     /// <summary>Batch 706: the sign-up pages' own stylesheet, at <see cref="PublicStylePath"/> (served on the friends' port only).</summary>
-    internal static IResult PublicStylesheet(HttpContext context) => Sheet(context, PublicCss);
+    internal static IResult PublicStylesheet(HttpContext context) => Kept(context, PublicCss);
 
-    private static IResult Sheet(HttpContext context, string css)
+    /// <summary>A file the browser keeps for a year: its address changes with its content (<see cref="Versioned"/>).</summary>
+    private static IResult Kept(HttpContext context, string text, string type = "text/css; charset=utf-8")
     {
         context.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
-        return Results.Text(css, "text/css; charset=utf-8");
+        return Results.Text(text, type);
     }
 
     /// <summary>
@@ -126,7 +148,7 @@ public static class HostPages
     internal static IResult PublicPage(string content, int status = StatusCodes.Status200OK, string? style = null) =>
         new Rendered(content, status, null, 0, false, true, style);
 
-    private sealed record Rendered(string Content, int Status, string? Refresh, int Step, bool Nav, bool Public, string? Style = null) : IResult
+    private sealed record Rendered(string Content, int Status, string? Refresh, int Step, bool Nav, bool Public, string? Style = null, string? Reopen = null) : IResult
     {
         public Task ExecuteAsync(HttpContext context)
         {
@@ -136,6 +158,8 @@ public static class HostPages
                 context.Response.Headers.CacheControl = "no-store";
                 context.Response.Headers.XContentTypeOptions = "nosniff";
             }
+            // Batch 867: a restarting page's script asks /health (Restarting), which setup mode's own policy would block.
+            if (Reopen is not null) context.Response.Headers.ContentSecurityPolicy = HostDashboard.Policy;
             context.Response.StatusCode = Status;
             context.Response.ContentType = "text/html; charset=utf-8";
             return context.Response.WriteAsync(Html(context.Items[typeof(Shell)] as Shell, context.Request.Path));
@@ -145,25 +169,29 @@ public static class HostPages
         {
             var heading = Regex.Match(Content, "<h1[^>]*>(.*?)</h1>", RegexOptions.Singleline);
             var title = (Content.Contains("class=error-summary", StringComparison.Ordinal) ? "Error: " : "") +
-                (heading.Success ? Regex.Replace(heading.Groups[1].Value, "<[^>]+>", "") + " · " : "") + "Amberline";
+                (heading.Success ? Regex.Replace(heading.Groups[1].Value, "<[^>]+>", "") + " · " : "") + Product;
             var name = shell?.Name() is { Length: > 0 } server ? WebUtility.HtmlEncode(server) : null;
             // Layout C: the sidebar only on the full Platform's own pages, whose links answer. The first-run steps and the pages without
             // links have the frame alone; their header names the server instead.
             var side = shell is { Nav: true } && Nav && Step == 0 ? Sidebar(shell, path, name) : "";
             var step = Step > 0 ? $"<p class=step>Step {Step} of {Steps.Length}: {Steps[Step - 1]}</p>" : "";
-            var head = Public ? "<header><p class=wordmark>Amberline</p></header>"
-                : "<header><p class=wordmark>Amberline</p>" + (side.Length == 0 && name is not null ? $"<p class=server>{name}</p>" : "") + "</header>";
+            var head = Public ? $"<header><p class=wordmark>{Product}</p></header>"
+                : $"<header><p class=wordmark>{Product}</p>" + (side.Length == 0 && name is not null ? $"<p class=server>{name}</p>" : "") + "</header>";
             var main = Public ? "<main id=main tabindex=-1>" : $"<div class=frame>{side}<main id=main tabindex=-1 class=page>";
             var close = Public ? "" : "</div>";
-            var footer = Public ? "" : $"<footer><p>Amberline {shell?.Version}</p></footer>";
+            var footer = Public ? "" : $"<footer><p>{Product} {shell?.Version}</p></footer>";
+            // Batch 867: a restarting page names its reopen on the body for page.js; only a browser without scripts refreshes after 5 seconds.
+            var refresh = Refresh is not null ? $"<meta http-equiv=refresh content=\"5;url={Refresh}\">"
+                : Reopen is not null ? $"<noscript><meta http-equiv=refresh content=\"5;url={Reopen}\"></noscript>" : "";
+            var body = Reopen is null ? "<body>" : $"<body data-reopen=\"{WebUtility.HtmlEncode(Reopen)}\">";
             // Every page loads page.js (batch 652) but the gate's refusals (403): a browser without the host's session cannot load it.
             return $$"""
                 <!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
-                {{(Refresh is null ? "" : $"<meta http-equiv=refresh content=\"5;url={Refresh}\">")}}<title>{{title}}</title><link rel=stylesheet href="{{(Public ? Style ?? PublicStyleHref : StyleHref)}}"></head>
-                <body><a class=skip href=#main>Skip to the main content</a>
+                {{refresh}}<title>{{title}}</title><link rel=stylesheet href="{{(Public ? Style ?? PublicStyleHref : StyleHref)}}"></head>
+                {{body}}<a class=skip href=#main>Skip to the main content</a>
                 {{head}}
                 {{main}}{{step}}{{Code.Replace(Content, "<span class=code>$0</span>")}}</main>{{close}}
-                {{footer}}{{(Public || Status == StatusCodes.Status403Forbidden ? "" : $"<script src={ScriptPath} defer></script>")}}</body></html>
+                {{footer}}{{(Public || Status == StatusCodes.Status403Forbidden ? "" : $"<script src=\"{ScriptHref}\" defer></script>")}}</body></html>
                 """;
         }
 
@@ -172,7 +200,7 @@ public static class HostPages
         {
             var items = string.Concat(Menu.Select(item => $"<li><a href={item.Path}{(Current(path, item.Path) ? " aria-current=page" : "")}>{item.Text}" +
                 (item.Path == UpdatesPath && shell.UpdateOut() ? UpdateBadge : "") + "</a></li>"));
-            return $"<nav class=side aria-label=\"Amberline\"><p class=server><span class=light aria-hidden=true></span>{name ?? "Amberline"}</p><ul>{items}</ul></nav>";
+            return $"<nav class=side aria-label=\"{Product}\"><p class=server><span class=light aria-hidden=true></span>{name ?? Product}</p><ul>{items}</ul></nav>";
         }
 
         private static bool Current(PathString path, string item) =>
@@ -419,7 +447,7 @@ public static class HostPages
         color:var(--text);font:.875rem/1.5 ui-monospace,Consolas,monospace;resize:vertical}
         .message{padding:12px 16px;border:1px solid var(--line);border-radius:2px;background:var(--field);white-space:pre-wrap;overflow-wrap:anywhere;
         font:.9375rem/1.5 ui-monospace,Consolas,monospace}
-        .notes{white-space:pre-wrap}
+        .notes{margin:0 0 16px;overflow-wrap:anywhere}
         .headline{font-size:1.125rem}
         progress{display:block;width:100%;max-width:32rem;height:1.5rem;margin:0 0 8px;accent-color:var(--gold)}
         .checks,.cards{padding-left:0;list-style:none}
@@ -463,7 +491,8 @@ public static class HostPages
     /// table (<see cref="PlatformManagement.OnlineJsonPath"/>, while the table is <c>data-live</c>); it runs the Copy buttons
     /// (<c>data-copy</c> names the element whose text is copied), batch 652, the wait feedback of <see cref="Wait"/>, and, batch 666,
     /// Update now's progress (<see cref="HostUpdates.StatusPath"/>, every second while the page has its bar), and, batch 748, the Users page's
-    /// search (it shows what has <c>data-needs-script</c>, and hides the rows that do not match, as the host types). It only
+    /// search (it shows what has <c>data-needs-script</c>, and hides the rows that do not match, as the host types), and, batch 867, a restarting
+    /// page's way back (<see cref="Restarting"/>). It only
     /// ever sets text, never markup, and a text only when it changed (the headline is a live region). A Copy button says "Copied" on
     /// itself and in the <c>copy-status</c> live region beside it; when the browser cannot copy, it selects the text.
     /// </summary>
@@ -723,6 +752,24 @@ public static class HostPages
             const left = limit - used;
             text('news-budget', left >= 0 ? `${left} bytes left of ${limit}.` : `${-left} bytes over the ${limit}-byte limit.`);
           });
+          // Batch 867: a restarting page (its body names the reopen) goes there once Amberline answers again: /health every second, and only after
+          // the stopping process stopped answering (or 30 seconds on), so its last moments never take the one-time code.
+          const reopen = document.body.dataset.reopen;
+          if (reopen) {
+            const since = Date.now();
+            let down = false;
+            const back = async () => {
+              try {
+                const answer = await fetch('/health', { cache: 'no-store' });
+                if (!answer.ok) throw new Error(String(answer.status));
+                if (down || Date.now() - since > 30000) { location.replace(reopen); return; }
+              } catch {
+                down = true;
+              }
+              setTimeout(back, 1000);
+            };
+            setTimeout(back, 1000);
+          }
           if (byId('status')) { refresh(); setInterval(refresh, 5000); }
           if (byId('online-table')?.hasAttribute('data-live')) setInterval(online, 5000);
           if (byId('update-bar')) setTimeout(update, 1000);

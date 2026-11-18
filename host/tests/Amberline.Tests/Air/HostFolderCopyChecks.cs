@@ -87,7 +87,7 @@ public static class HostFolderCopyChecks
             // so GAME_DATA_ROOT never moves to this synthetic game under the other checks).
             File.Delete(folder.Home.Loop.Paths.ServerExecutable);
             var next = await browser.PostAsync("/setup", ("game", inside), ("air", Path.Combine(folder.Install, "air")));
-            TestAssert.True(next.Status == HttpStatusCode.OK && next.Page.Contains("<h1>Starting Amberline</h1>", StringComparison.Ordinal), next.Page);
+            TestAssert.True(next.Status == HttpStatusCode.OK && next.Page.Contains($"<h1>Starting {HostPages.Product}</h1>", StringComparison.Ordinal), next.Page);
             await HostModeChecks.WaitForStartsAsync(folder.Home.Loop, 2, folder.Run!);
             folder.Names(inside, Path.Combine(folder.Install, "air"));
         });
@@ -108,7 +108,7 @@ public static class HostFolderCopyChecks
             TestAssert.True(offer.Page.Contains("<div class=actions><a href=/setup>Back</a>", StringComparison.Ordinal), offer.Page);
             File.Delete(folder.Home.Loop.Paths.ServerExecutable);
             var kept = await browser.PostAsync("/setup", ("game", folder.Game), ("air", folder.Air), ("delete", "yes"), ("keep", "1"));
-            TestAssert.True(kept.Status == HttpStatusCode.OK && kept.Page.Contains("<h1>Starting Amberline</h1>", StringComparison.Ordinal), kept.Page);
+            TestAssert.True(kept.Status == HttpStatusCode.OK && kept.Page.Contains($"<h1>Starting {HostPages.Product}</h1>", StringComparison.Ordinal), kept.Page);
             await HostModeChecks.WaitForStartsAsync(folder.Home.Loop, 2, folder.Run!);
             folder.Names(folder.Game, folder.Air);
             TestAssert.Equal(originals, Snapshot(folder.Downloads), "the folders stay as they were");
