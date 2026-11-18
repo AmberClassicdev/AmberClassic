@@ -183,8 +183,11 @@ public sealed class PlatformStoreCalendar
     /// own maps join them (<see cref="Amberline.Core.GameMaps.LineMaps"/>: the winter rift, LEVELS/Map6, on 132; none on 126), in map id
     /// order, the order the client sorts them in.
     /// </summary>
+    /// Amber Classic: setting the machine environment variable AMBER_HIDE_WINTER to 1 (then restarting Amberline) leaves the winter
+    /// rift out of custom games, for a community whose clients cannot load LEVELS/Map6.
     public static IReadOnlyList<int> OpenMapIds { get; } =
-        [.. new[] { NormalRiftMapId, HarrowingRiftMapId, TwistedTreelineMapId, CrystalScarMapId }.Concat(Amberline.Core.GameMaps.LineMaps).Order()];
+        [.. new[] { NormalRiftMapId, HarrowingRiftMapId, TwistedTreelineMapId, CrystalScarMapId }.Concat(Amberline.Core.GameMaps.LineMaps)
+            .Where(id => id != Amberline.Core.GameMaps.Winter || Environment.GetEnvironmentVariable("AMBER_HIDE_WINTER") != "1").Order()];
 
     /// <summary>Summoner's Rift (LEVELS/Map1), the only map before the Harrowing rift.</summary>
     public const int NormalRiftMapId = Amberline.Core.GameMaps.Normal;

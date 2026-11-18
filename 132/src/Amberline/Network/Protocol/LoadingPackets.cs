@@ -362,8 +362,18 @@ public static class LoadingPackets
         // then the two ints at byte 0x97 and byte 0x9B (126: char[28] each, the ints at byte 0x4F and byte 0x53).
         ProtocolEncoding.WriteFixedAscii(writer, player.Name, 64, 63);
         ProtocolEncoding.WriteFixedAscii(writer, player.ChampionName, 64, 63);
-        writer.Write(0);
-        writer.Write(0);
+        // Amber Classic spectator experiment: the two ints after the names, whose meaning is not recovered, read from the machine
+        // environment variables AMBER_PLI_A and AMBER_PLI_B (default 0, the stock value). "skin" sends the player's skin id.
+        writer.Write(ExperimentInt("AMBER_PLI_A", player));
+        writer.Write(ExperimentInt("AMBER_PLI_B", player));
+    }
+
+    private static int ExperimentInt(string name, LeagueLoadingPlayer player)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(value)) return 0;
+        if (value.Trim().Equals("skin", StringComparison.OrdinalIgnoreCase)) return player.SkinId;
+        return int.TryParse(value.Trim(), out var number) ? number : 0;
     }
 
     private static void WriteEmptyPlayerLiteInfo(BinaryWriter writer)
