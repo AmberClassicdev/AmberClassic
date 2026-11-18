@@ -107,7 +107,7 @@ internal sealed partial class BbNativeHandlers
         var ideal = Sum(call, "IdealDistance");
         var requested = distance <= 1e-9 ? origin : new Position2(origin.X + dx / distance * travel, origin.Z + dz / distance * travel);
         var (type, postpone, face) = MoveOptions(call);
-        _host.Moves.Start(unit, requested, MoveSpeed(call, travel, ideal), Sum(call, "Gravity"), type, postpone, face,
+        _host.Moves.Start(unit, requested, IdealSpeed(Sum(call, "Speed"), travel, ideal), Sum(call, "Gravity"), type, postpone, face,
             fitBody: !(ideal > 0.0 && targetValue is not Entity));
     }
 
@@ -116,20 +116,6 @@ internal sealed partial class BbNativeHandlers
     /// scaled by travel / ideal when both are above 0, so the move lasts ideal / speed (see <see cref="Move"/>); unchanged otherwise. The result is
     /// a float32, as every number the natives read is (<see cref="Sum"/>): a knock-up whose ring equals its ideal distance keeps its speed exactly.
     /// </summary>
-    /// <summary>
-    /// Amber Classic experiment: a move whose script picks its speed and its arc by distance tiers (SpeedVar and GravityVar) and names a
-    /// literal IdealDistance keeps the script's speed when the machine environment variable AMBER_TIERED_SPEED is "real". Only FizzJump and
-    /// FizzJumpTwo ship that shape (IdealDistance 500 over hops of at most 400); the other tiered leaps (Leap Strike, Rocket Jump,
-    /// Pantheon's leap) pass the move's own length and keep their speed either way. Unset, the ideal-distance rule applies as before.
-    /// </summary>
-    private static double MoveSpeed(BbCall call, double travel, double ideal)
-    {
-        var speed = Sum(call, "Speed");
-        var tiered = ideal > 0.0 && call.Value("SpeedVar") is not null && call.Value("GravityVar") is not null &&
-                     call.Value("IdealDistanceVar") is null;
-        return tiered && Environment.GetEnvironmentVariable("AMBER_TIERED_SPEED") == "real" ? speed : IdealSpeed(speed, travel, ideal);
-    }
-
     internal static double IdealSpeed(double speed, double travel, double ideal) =>
         ideal > 0.0 && travel > 0.0 ? (float)(speed * travel / ideal) : speed;
 

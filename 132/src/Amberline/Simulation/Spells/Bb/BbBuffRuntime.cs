@@ -2160,68 +2160,17 @@ internal sealed class BbBuffRuntime
 
     private void RunDeactivation(BbBuffInstance instance, bool expired)
     {
-        // Only a buff that still holds a status needs to know which buffs its deactivation adds (HandOffHeldStatuses).
-        var before = instance.HeldStatuses.Any(item => StatusActs(item.Key, item.Value)) ? _instances.Values.ToHashSet() : null;
         if (instance.Stacks.Count == 0)
             _router.RunBuffHook(instance, "OnBuffDeactivate", _host.Spells.World.Get(instance.CasterNetId),
                 prepare: scope => scope.Vars["Expired"] = expired);
         foreach (var stack in instance.Stacks.ToArray())
             RunStackHook(instance, stack, "OnBuffDeactivate", scope => scope.Vars["Expired"] = expired);
-        HandOffHeldStatuses(instance, before);
         foreach (var id in instance.SupersededEffects)
             if (_host.KilledEffects.Add(id)) _host.Spells.Effects.KillEffect(id);
         // Batch 726: what the buff's tables still own outlived it (BbSpellHost.RetireOwnedEffects).
         _host.RetireOwnedEffects(instance.InstanceVars);
         foreach (var stack in instance.Stacks) _host.RetireOwnedEffects(stack.Vars);
     }
-
-    /// <summary>
-    /// Amber Classic fix: a status the ending buff still holds passes to a buff its own <c>OnBuffDeactivate</c> just added to the same unit (a
-    /// relay) when that buff's <c>OnBuffDeactivate</c> writes it back to rest, instead of ending with the buff. Only a relay inherits: a buff
-    /// that was already there (Fizz's own Q buff, Renekton's empowered W, a summoner channel) never takes a status it had nothing to do with. FizzJump clears CanAttack, CanMove and Targetable in OnBuffActivate, ends when Fizz lands
-    /// and adds FizzJumpDelay, whose OnBuffDeactivate is what restores them; released at the landing, Fizz attacked from his trident during the
-    /// 0.2 s reactivation window and the attack's animation replaced the trident pose. The scripts that restore a status in the deactivation of
-    /// the buff that follows show that retail kept the bit across the handoff; a status no live buff restores still ends with its buff.
-    /// </summary>
-    private void HandOffHeldStatuses(BbBuffInstance ending, HashSet<BbBuffInstance>? before)
-    {
-        if (before is null) return;
-        var acting = ending.HeldStatuses.Where(item => StatusActs(item.Key, item.Value)).ToArray();
-        if (acting.Length == 0) return;
-        // The deactivation's own adds (FizzJumpDelay) were placed when its run ended (BbHookRouter's CommitProcAdds).
-        var unit = ending.Owner;
-        foreach (var (status, value) in acting)
-        {
-            var rest = !value;
-            var heir = _instances.Values.FirstOrDefault(other => !before.Contains(other) && ReferenceEquals(other.Owner, unit) &&
-                unit.Buffs.Contains(other.State) && RestoresOnDeactivate(other.Script, status, rest));
-            if (heir is null || (heir.HeldStatuses.TryGetValue(status, out var held) && StatusActs(status, held))) continue;
-            heir.HeldStatuses[status] = value;
-            Resample(heir);
-        }
-    }
-
-    /// <summary>
-    /// Whether the relay's end gives the status back: its own <c>OnBuffDeactivate</c> writes the rest value, or adds to its holder a buff whose
-    /// activation or deactivation does. FizzJumpDelay does not restore CanMove itself; the FizzTrickSlam it adds at its end does, in its
-    /// OnBuffActivate, so Fizz cannot walk off his trident before the slam.
-    /// </summary>
-    private bool RestoresOnDeactivate(BbScript script, BbSetStatus status, bool rest)
-    {
-        if (WritesRest(script, "OnBuffDeactivate", status, rest)) return true;
-        foreach (var step in script.Walk())
-        {
-            if (step.Hook != "OnBuffDeactivate" || step.Block.Function != "BBSpellBuffAdd" || step.Block.Text("TargetVar") != "Owner" ||
-                step.Block.Text("BuffName") is not { } next || _scripts.FindOrShipped(next) is not { } added || ReferenceEquals(added, script)) continue;
-            if (WritesRest(added, "OnBuffActivate", status, rest) || WritesRest(added, "OnBuffDeactivate", status, rest)) return true;
-        }
-        return false;
-    }
-
-    private static bool WritesRest(BbScript script, string hook, BbSetStatus status, bool rest) =>
-        script.Walk().Any(step => step.Hook == hook && step.Block.Function == "BBSetStatus" &&
-                                  step.Block.Param("Status") is BbValue.Reference { Name: var name } && name == status.ToString() &&
-                                  step.Block.Param("SrcValue") is BbValue.Bool { Value: var written } && written == rest);
 
     /// <summary>
     /// Runs <paramref name="dispatch"/> (a missile-end dispatch), then the <c>OnBuffDeactivate</c> hooks of the buffs it removed. Talon's Rake: the
