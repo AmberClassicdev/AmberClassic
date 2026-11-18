@@ -150,7 +150,12 @@ internal sealed class ProductionServices
         var skinName = entity.IsSummonerBeacon ? "SummonerBeacon" : entity.Name;
         return CreationWithStats(entity, SpawnPackets.SpawnMinion(new SpawnMinionSnapshot(entity.NetId,
             SessionSpawnService.MapNetNodeId, entity.Position, TeamMapping.ToNative(entity.Team),
-            displayName, skinName, entity.IsWard, SkinId: entity.SkinId, VisibilitySize: (float)entity.VisibilitySize),
+            // Amber Classic fix: the call's IgnoreCollision bit (Entity.SpawnIgnoreCollision) goes on the wire, as the direct path
+            // (ProtocolSpellEffectSink.SendMinionSpawn) and the Noxious Trap above send it and as the server's client-movement mirror
+            // already assumes (MovementSystem.ExeHost RowOf). This creation dropped it, so the client got 0 for every script unit
+            // that asks for it (FizzShark: the shark of Fizz's R never showed).
+            displayName, skinName, entity.IsWard, IgnoreCollision: entity.SpawnIgnoreCollision, SkinId: entity.SkinId,
+            VisibilitySize: (float)entity.VisibilitySize),
             _navigation.HeightAt(entity.Position)));
     }
 
