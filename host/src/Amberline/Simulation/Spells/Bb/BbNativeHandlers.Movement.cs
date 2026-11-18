@@ -107,9 +107,23 @@ internal sealed partial class BbNativeHandlers
         var ideal = Sum(call, "IdealDistance");
         var requested = distance <= 1e-9 ? origin : new Position2(origin.X + dx / distance * travel, origin.Z + dz / distance * travel);
         var (type, postpone, face) = MoveOptions(call);
-        _host.Moves.Start(unit, requested, IdealSpeed(Sum(call, "Speed"), travel, ideal), Sum(call, "Gravity"), type, postpone, face,
+        var started = _host.Moves.Start(unit, requested, IdealSpeed(Sum(call, "Speed"), travel, ideal), Sum(call, "Gravity"), type, postpone, face,
             fitBody: !(ideal > 0.0 && targetValue is not Entity));
+        // Amber Classic fix: the unlocked clip the same hook run played on this hero before the move is played again after the dash is
+        // announced. A hero that was walking kept its run loop when the dash's path arrived, over the unlocked clip sent just before it
+        // (FizzJump's Spell3a: Fizz slid along the ground instead of vaulting; cast standing still, the clip showed). FizzJumpTwo, which
+        // plays its clip after its BBMove, is the order that shows. Shipped: FizzJump, RivenFeint and Headbutt play before they move.
+        if (started is not null && _unlockedPlay is { } play && _host.HasFrame && ReferenceEquals(play.Frame, _host.Frame) &&
+            ReferenceEquals(play.Unit, unit) && _host.Spells.Effects.IsReferenceReady(unit))
+            _host.Spells.Effects.PlayAnimation(unit, play.Name, loop: play.Loop, lockAnimation: false, blend: play.Blend, duration: play.Duration);
+        _unlockedPlay = null;
     }
+
+    private (Entity Unit, BbHookFrame Frame, string Name, bool Loop, bool Blend, float Duration)? _unlockedPlay;
+
+    /// <summary>Amber Classic: the animation native reports an unlocked clip it played on a hero, for <see cref="Move"/> to play again after its dash.</summary>
+    internal void NoteUnlockedPlay(Entity unit, string name, bool loop, bool blend, float duration) =>
+        _unlockedPlay = _host.HasFrame && unit.UnitType == UnitType.Hero ? (unit, _host.Frame, name, loop, blend, duration) : null;
 
     /// <summary>
     /// The speed of a move of <paramref name="travel"/> units whose call gives <paramref name="speed"/> for <paramref name="ideal"/> units:
