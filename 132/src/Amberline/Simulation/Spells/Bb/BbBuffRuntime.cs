@@ -2160,7 +2160,8 @@ internal sealed class BbBuffRuntime
 
     private void RunDeactivation(BbBuffInstance instance, bool expired)
     {
-        var before = _instances.Values.ToHashSet();
+        // Only a buff that still holds a status needs to know which buffs its deactivation adds (HandOffHeldStatuses).
+        var before = instance.HeldStatuses.Any(item => StatusActs(item.Key, item.Value)) ? _instances.Values.ToHashSet() : null;
         if (instance.Stacks.Count == 0)
             _router.RunBuffHook(instance, "OnBuffDeactivate", _host.Spells.World.Get(instance.CasterNetId),
                 prepare: scope => scope.Vars["Expired"] = expired);
@@ -2182,8 +2183,9 @@ internal sealed class BbBuffRuntime
     /// 0.2 s reactivation window and the attack's animation replaced the trident pose. The scripts that restore a status in the deactivation of
     /// the buff that follows show that retail kept the bit across the handoff; a status no live buff restores still ends with its buff.
     /// </summary>
-    private void HandOffHeldStatuses(BbBuffInstance ending, HashSet<BbBuffInstance> before)
+    private void HandOffHeldStatuses(BbBuffInstance ending, HashSet<BbBuffInstance>? before)
     {
+        if (before is null) return;
         var acting = ending.HeldStatuses.Where(item => StatusActs(item.Key, item.Value)).ToArray();
         if (acting.Length == 0) return;
         // The deactivation's own adds (FizzJumpDelay) were placed when its run ended (BbHookRouter's CommitProcAdds).
