@@ -301,7 +301,13 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
             // TargetExecute destroys them on him; the sweep met him at LineWidth plus his radius (140 and 315 units out), so the 0x5D removed
             // each blade that far from him (obj_SpellMissile's DestroyClientMissile handler flags it at once). Reconstruction: whether retail's
             // server-only sweep also skipped the tracked unit is not in the client; the arrival collide and the scripts' Target == Owner branch are.
-            if (_tracked.Alive && !_hit.Contains(_tracked.NetId) && Admissible(system, _tracked)) Strike(system, _tracked);
+            // Amber Classic fix: a line that comes back to its own caster and whose TargetExecute has its own Target == caster branch
+            // (AhriOrbReturn: destroy the orb and reset CharVars.OrbofDeceptionIsActive) is handed the caster on arrival even when its flags
+            // admit no friend. Without it the flag stayed 1 after the first Essence Theft heal, so every later Orb took the heal branch and
+            // Orb of Deception never gave a passive charge again.
+            if (_tracked.Alive && !_hit.Contains(_tracked.NetId) &&
+                (Admissible(system, _tracked) || (_tracked.NetId == Caster.NetId && HandlesOwnArrival(_script))))
+                Strike(system, _tracked);
             return Finish(system, _tracked);
         }
         ChampionSpellSupport.RefreshMissile(system, Caster, _castInfo, _origin, _position, goal, _speed, casterProjection: _projection, lineHeight: _height);
@@ -393,6 +399,13 @@ internal sealed class BbLineMissile : ISharedSpellProjectile
             Strike(system, unit);
         }
     }
+
+    /// <summary>Amber Classic: whether the line's TargetExecute tests its target against its caster (<c>BBIf Target</c> against
+    /// <c>Attacker</c> or <c>Owner</c>), the branch a returning line runs when it reaches the unit that cast it.</summary>
+    private static bool HandlesOwnArrival(BbScript script) =>
+        script.Walk().Any(item => item.Hook == "TargetExecute" && item.Block.Function == "BBIf" &&
+                                  ((item.Block.Text("Src1Var") == "Target" && item.Block.Text("Src2Var") is "Attacker" or "Owner") ||
+                                   (item.Block.Text("Src2Var") == "Target" && item.Block.Text("Src1Var") is "Attacker" or "Owner")));
 
     private bool Admissible(SpellSystem system, Entity unit) =>
         BbSpellTargeting.Admits(Caster, unit, _flags) && system.Combat.IsTargetable(unit, null) &&
