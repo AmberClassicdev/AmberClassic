@@ -886,7 +886,10 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
     /// its script's duration; HalloweenUrfCD (9 s) still spaces the reveals 10 s apart.
     /// </summary>
     private static double BuffAddDuration(string name, double duration) =>
-        name == "HalloweenUrfAppear" ? Math.Max(duration, UrfAppearClipSeconds) : duration;
+        name == "HalloweenUrfAppear" ? Math.Max(duration, UrfAppearClipSeconds)
+        // Amber Classic debug switch (AmberDebug, "shark-life=5"): the shark of Fizz's R stays that many seconds, to see whether it shows at all.
+        : name == "FizzShark" && AmberDebug.Number("shark-life") is double life and > 0.0 and < 60.0 ? life
+        : duration;
 
     /// <summary>The last frame of <c>Urf_idle1.anm</c> (198 / 30 s) plus a 0.1 s margin (<see cref="BuffAddDuration"/>).</summary>
     private const double UrfAppearClipSeconds = 6.7;
@@ -1595,7 +1598,10 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         // optional booleans default to Loop false, Blend true and Lock true (8 of the 93 shipped calls omit Lock; BBUnlockAnimation,
         // the unlock native, is what releases it and sets the CanAttack bit again).
         var loop = Flag(call, "Loop", false);
-        Spells.Effects.PlayAnimation(unit, name, loop: loop, lockAnimation: Flag(call, "Lock", true),
+        // Amber Classic debug switch (AmberDebug, "fizz-e-lock=1"): Fizz's jump clip (Spell3a, unlocked in FizzJump) is sent locked, to see
+        // whether a lock keeps it on screen when E is cast while he walks.
+        var forceLock = name == "Spell3a" && unit.UnitType == UnitType.Hero && unit.ChampionName == "Fizz" && AmberDebug.On("fizz-e-lock");
+        Spells.Effects.PlayAnimation(unit, name, loop: loop, lockAnimation: forceLock || Flag(call, "Lock", true),
             blend: Flag(call, "Blend", true), duration: (float)Sum(call, "ScaleTime"));
         // Reconstruction (batch 476): a looped play by a channel's hook is that channel's loop (BbScriptChannels.NoteLoop).
         if (loop) _host.Channels.NoteLoop(unit);
