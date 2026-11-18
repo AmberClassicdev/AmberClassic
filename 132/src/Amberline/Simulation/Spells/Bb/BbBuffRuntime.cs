@@ -1113,6 +1113,9 @@ internal sealed class BbBuffRuntime
         {
             BbBuffAddType.BUFF_STACKS_AND_OVERLAPS or BbBuffAddType.BUFF_RENEW_EXISTING => wanted,
             BbBuffAddType.BUFF_STACKS_AND_RENEWS or BbBuffAddType.BUFF_STACKS_AND_CONTINUE => Math.Max(1, request.Stacks),
+            // Amber Classic fix: a replacing add with NumberOfStacks above 1 (AhriTumble: MaxStack 2, NumberOfStacks 2) starts with that many
+            // stacks. With one, Spirit Rush's second cast found Count 1, removed the last stack and went on cooldown: two dashes instead of three.
+            BbBuffAddType.BUFF_REPLACE_EXISTING => wanted,
             _ => 1,
         };
         BuffState? state = null;
@@ -1133,8 +1136,11 @@ internal sealed class BbBuffRuntime
                     // with his name when his bomb is on the target, then adds its own bomb REPLACE_EXISTING; the bomb blasts again at its end only
                     // when it expires (OnBuffDeactivate, Expired), so a per-caster add would let the other bomb go off a second time. The wiki's
                     // V1.0.0.96 "Bug Fix: Not detonating an enemy Zilean's bomb when landing on the same unit" shows the detonation is retail.
-                    state = services.Add(request.Target, request.Name, type, request.Duration, request.Caster.NetId, payload,
-                        request.CanMitigateDuration);
+                    state = index == 0
+                        ? services.Add(request.Target, request.Name, type, request.Duration, request.Caster.NetId, payload,
+                            request.CanMitigateDuration)
+                        : services.AddStacking(request.Target, request.Name, type, request.Duration, request.Caster.NetId,
+                            wanted, payload, canMitigateDuration: request.CanMitigateDuration);
                     break;
                 case BbBuffAddType.BUFF_RENEW_EXISTING:
                     // The live instance keeps its slot, start time and visuals; duration and variables are refreshed. The first application
