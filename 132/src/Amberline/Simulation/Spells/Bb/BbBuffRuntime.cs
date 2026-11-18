@@ -2160,12 +2160,13 @@ internal sealed class BbBuffRuntime
 
     private void RunDeactivation(BbBuffInstance instance, bool expired)
     {
+        var before = _instances.Values.ToHashSet();
         if (instance.Stacks.Count == 0)
             _router.RunBuffHook(instance, "OnBuffDeactivate", _host.Spells.World.Get(instance.CasterNetId),
                 prepare: scope => scope.Vars["Expired"] = expired);
         foreach (var stack in instance.Stacks.ToArray())
             RunStackHook(instance, stack, "OnBuffDeactivate", scope => scope.Vars["Expired"] = expired);
-        HandOffHeldStatuses(instance);
+        HandOffHeldStatuses(instance, before);
         foreach (var id in instance.SupersededEffects)
             if (_host.KilledEffects.Add(id)) _host.Spells.Effects.KillEffect(id);
         // Batch 726: what the buff's tables still own outlived it (BbSpellHost.RetireOwnedEffects).
@@ -2174,13 +2175,14 @@ internal sealed class BbBuffRuntime
     }
 
     /// <summary>
-    /// Amber Classic fix: a status the ending buff still holds passes to another buff of the same unit whose <c>OnBuffDeactivate</c> writes it
-    /// back to rest, instead of ending with the buff. FizzJump clears CanAttack, CanMove and Targetable in OnBuffActivate, ends when Fizz lands
+    /// Amber Classic fix: a status the ending buff still holds passes to a buff its own <c>OnBuffDeactivate</c> just added to the same unit (a
+    /// relay) when that buff's <c>OnBuffDeactivate</c> writes it back to rest, instead of ending with the buff. Only a relay inherits: a buff
+    /// that was already there (Fizz's own Q buff, Renekton's empowered W, a summoner channel) never takes a status it had nothing to do with. FizzJump clears CanAttack, CanMove and Targetable in OnBuffActivate, ends when Fizz lands
     /// and adds FizzJumpDelay, whose OnBuffDeactivate is what restores them; released at the landing, Fizz attacked from his trident during the
     /// 0.2 s reactivation window and the attack's animation replaced the trident pose. The scripts that restore a status in the deactivation of
     /// the buff that follows show that retail kept the bit across the handoff; a status no live buff restores still ends with its buff.
     /// </summary>
-    private void HandOffHeldStatuses(BbBuffInstance ending)
+    private void HandOffHeldStatuses(BbBuffInstance ending, HashSet<BbBuffInstance> before)
     {
         var acting = ending.HeldStatuses.Where(item => StatusActs(item.Key, item.Value)).ToArray();
         if (acting.Length == 0) return;
@@ -2189,7 +2191,7 @@ internal sealed class BbBuffRuntime
         foreach (var (status, value) in acting)
         {
             var rest = !value;
-            var heir = _instances.Values.FirstOrDefault(other => !ReferenceEquals(other, ending) && ReferenceEquals(other.Owner, unit) &&
+            var heir = _instances.Values.FirstOrDefault(other => !before.Contains(other) && ReferenceEquals(other.Owner, unit) &&
                 unit.Buffs.Contains(other.State) && RestoresOnDeactivate(other.Script, status, rest));
             if (heir is null || (heir.HeldStatuses.TryGetValue(status, out var held) && StatusActs(status, held))) continue;
             heir.HeldStatuses[status] = value;
