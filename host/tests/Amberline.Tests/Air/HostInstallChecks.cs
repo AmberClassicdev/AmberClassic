@@ -304,15 +304,16 @@ public static class HostInstallChecks
             TestAssert.False(page.Contains("<b>Faster", StringComparison.Ordinal), "the release text is shown as text");
             // Batch 867: the notes' Markdown as the page shows it (batch 863 saw the raw text): headings, a list, bold, code and an https link, every
             // character encoded first; a link to another scheme is its text only, and a mark the 600-character cut left open stays as written.
+            // Batch 879: a bullet's indented continuation line goes on in that bullet (batch 875 saw it as a paragraph after the list).
             var notes = HostUpdates.Render("", HostVersion.Read(app), found with
             {
-                Notes = "# Amberline 1.11.0\r\n\nBuilt from **source** `abc123`.\n\n## What changed\n\n- Faster <b>games</b>\n" +
+                Notes = "# Amberline 1.11.0\r\n\nBuilt from **source** `abc123`.\n\n## What changed\n\n- Faster <b>games</b>\n  for everyone\n" +
                         "- See [the page](https://github.com/Amberline-Dev/Project-Amberline/releases) or [this](javascript:void)\n* **bold `code`** too\n\nCut **here...",
             });
             foreach (var phrase in new[]
                      {
                          "<h3>What's new</h3><div class=notes><h3>Amberline 1.11.0</h3><p>Built from <strong>source</strong> <code>abc123</code>.</p><h3>What changed</h3>",
-                         "<ul><li>Faster &lt;b&gt;games&lt;/b&gt;</li><li>See <a href=\"https://github.com/Amberline-Dev/Project-Amberline/releases\" target=_blank " +
+                         "<ul><li>Faster &lt;b&gt;games&lt;/b&gt; for everyone</li><li>See <a href=\"https://github.com/Amberline-Dev/Project-Amberline/releases\" target=_blank " +
                          "rel=\"noopener noreferrer\">the page</a> or this</li><li><strong>bold <code>code</code></strong> too</li></ul><p>Cut **here...</p></div>",
                      })
                 TestAssert.True(notes.Contains(phrase, StringComparison.Ordinal), $"the notes render <{phrase}>: {notes}");

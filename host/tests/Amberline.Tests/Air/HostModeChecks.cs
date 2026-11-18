@@ -247,7 +247,9 @@ public static class HostModeChecks
     /// stayed in that process, and creating the host's login was a broken page. This check runs setup mode in its own process (server
     /// checks run one per process), reads the list the way that start did, and saves the folders; the restart then starts the real
     /// Platform program, copied into a release layout, which takes the host's login. The dashboard's Restart is another new process,
-    /// and its Stop ends every one with exit code 0. The address is home-network only, so no router is asked.
+    /// and its Stop ends every one. Batch 879: a process that handed over ends once the next one answers (setup mode here with 0), so
+    /// only one Platform of the copy runs after the Restart (batch 875 found one more waiting after each restart). The address is
+    /// home-network only, so no router is asked.
     /// </summary>
     private static async Task FreshProcessAsync()
     {
@@ -273,7 +275,8 @@ public static class HostModeChecks
         var run = Task.Run(() => HostMode.RunAsync(home.Loop));
         try
         {
-            using var browser = home.Client();
+            var jar = new CookieContainer();
+            using var browser = home.Client(jar);
             await WaitForHealthAsync(browser, "setup", run);
             await home.SignInAsync(browser);
             // What the VM's start did before its folders were saved: the list read with no AIR client to find, and the failure kept.
@@ -287,7 +290,12 @@ public static class HostModeChecks
                        { [token.Key] = token.Value, ["game"] = home.Game, ["air"] = home.Air })))
                 reopen = Refresh(await folders.Content.ReadAsStringAsync());
             TestAssert.True(reopen.StartsWith("/open?c=", StringComparison.Ordinal), "the restarting page carries a fresh launch code: " + reopen);
-            await WaitForHealthAsync(browser, "ready", run);
+            TestAssert.Equal(0, await run.WaitAsync(TimeSpan.FromSeconds(60)), "setup mode's process ends once the new one answers" + Log(home));
+            // The new processes' early end shows as their page never answering.
+            var never = new TaskCompletionSource<int>().Task;
+            await WaitForHealthAsync(browser, "ready", never);
+            var restarted = Platforms(program);
+            TestAssert.Equal(1, restarted.Length, "one Platform of the copy runs after setup mode's handover");
             await SignedInAgainAsync(browser, reopen);
             await StepAsync(browser, HostSteps.Start, "/host/setup/login");
             token = Token(await browser.GetStringAsync("/host/setup/login"));
@@ -312,11 +320,18 @@ public static class HostModeChecks
             reopen = Refresh(await EndAsync(browser, "restart"));
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
             while (await HostMode.ProbeAsync(home.Port) is not null && DateTime.UtcNow < deadline) await Task.Delay(20);
-            await WaitForHealthAsync(browser, "ready", run);
+            await WaitForHealthAsync(browser, "ready", never);
+            TestAssert.True(await EndsAsync(restarted[0]), "the restarted process ends once the new one answers");
+            var last = Platforms(program);
+            TestAssert.Equal(1, last.Length, "one Platform of the copy runs after the Restart");
             await SignedInAgainAsync(browser, reopen);
             await StepAsync(browser, HostSteps.Start, HostDashboard.PagePath);
             TestAssert.True((await EndAsync(browser, "stop")).Contains($"{HostPages.Product} has stopped", StringComparison.Ordinal), "Stop answers");
-            TestAssert.Equal(0, await run.WaitAsync(TimeSpan.FromSeconds(60)), "Stop ends every process, and the window's exit code is 0");
+            TestAssert.True(await EndsAsync(last[0]), "Stop ends the last process");
+            TestAssert.Equal(0, Platforms(program).Length, "no Platform of the copy runs after Stop");
+            // Batch 879: setup mode and the full Platform (each line's Program.cs) set only this line's cookie names.
+            TestAssert.Equal(string.Join(" ", new[] { HostSessions.CookieName, HostSessions.FormsCookie }.Order()),
+                string.Join(" ", jar.GetAllCookies().Select(cookie => cookie.Name).Distinct().Order()), "the browser's cookies");
             TestAssert.Equal(1, home.Opened.Count, "the new processes open no browser page");
             TestAssert.False(home.Screen.ToString().Contains("Amberline could not start again", StringComparison.Ordinal), home.Screen.ToString());
         }
@@ -334,7 +349,38 @@ public static class HostModeChecks
         }
         var listeners = IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners();
         foreach (var port in new[] { home.Port, home.RtmpPort, home.XmppPort, home.RemotePort })
-            TestAssert.False(listeners.Any(endpoint => endpoint.Port == port), $"Stop releases port {port}");
+        {
+            var busy = listeners.Any(endpoint => endpoint.Port == port);
+            TestAssert.False(busy, busy ? $"Stop releases port {port}: {Listening(port)}" : "");
+        }
+    }
+
+    /// <summary>The processes of <paramref name="program"/> that run now (one whose path cannot be read is not this copy's).</summary>
+    private static Process[] Platforms(string program) => Process.GetProcessesByName(Path.GetFileNameWithoutExtension(program)).Where(process =>
+    {
+        try { if (string.Equals(process.MainModule?.FileName, program, StringComparison.OrdinalIgnoreCase) && !process.HasExited) return true; }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException) { }
+        process.Dispose();
+        return false;
+    }).ToArray();
+
+    /// <summary>Whether <paramref name="process"/> ends (its handle signals, so its sockets are closed) within 30 seconds.</summary>
+    private static async Task<bool> EndsAsync(Process process)
+    {
+        using (process)
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30)); return true; }
+            catch (TimeoutException) { return false; }
+    }
+
+    /// <summary>DIAGNOSTICS: netstat's lines for <paramref name="port"/> with each owner's name, for a failure's message.</summary>
+    private static string Listening(int port)
+    {
+        using var netstat = Process.Start(new ProcessStartInfo("netstat", "-ano -p TCP") { UseShellExecute = false, RedirectStandardOutput = true, CreateNoWindow = true })!;
+        return string.Join("; ", netstat.StandardOutput.ReadToEnd().Split('\n').Where(line => line.Contains($":{port} ", StringComparison.Ordinal)).Select(line =>
+        {
+            try { using var owner = Process.GetProcessById(int.Parse(line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[^1])); return $"{line.Trim()} ({owner.ProcessName})"; }
+            catch (Exception ex) when (ex is ArgumentException or FormatException) { return line.Trim(); }
+        }));
     }
 
     /// <summary>A setup page's own refresh address (<c>http-equiv=refresh</c>).</summary>
@@ -516,7 +562,7 @@ public static class HostModeChecks
             };
         }
 
-        public HttpClient Client() => new(PageDump.Wrap(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = true, CookieContainer = new CookieContainer(), UseProxy = false }))
+        public HttpClient Client(CookieContainer? jar = null) => new(PageDump.Wrap(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = true, CookieContainer = jar ?? new CookieContainer(), UseProxy = false }))
             { BaseAddress = new Uri($"http://127.0.0.1:{Port}"), Timeout = TimeSpan.FromSeconds(10) };
 
         /// <summary>The start of every address the loop opens: the entry with its launch code after it.</summary>

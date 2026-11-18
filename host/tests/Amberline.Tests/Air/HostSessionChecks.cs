@@ -90,6 +90,21 @@ public static class HostSessionChecks
             }
             using (var still = await stranger.GetAsync("/setup"))
                 TestAssert.Equal(HttpStatusCode.Forbidden, still.StatusCode, "a refused code signs nobody in");
+            // Batch 879: each line's own cookie names (both lines run this check), so one browser keeps both lines' pages on 127.0.0.1. The old
+            // shared name is no session here, and an old form cookie changes nothing; the same session under this line's name is the control.
+            var line = PlatformLine.PatchName["patch-".Length..];
+            TestAssert.Equal(($"Amberline{line}.Host", $"Amberline{line}.Forms"), (HostSessions.CookieName, HostSessions.FormsCookie), "this line's cookie names");
+            foreach (var (cookie, status, what) in new[]
+                     {
+                         ($"Amberline.Host={session}", HttpStatusCode.Forbidden, "the old shared name is not this line's session"),
+                         ($"{HostSessions.CookieName}={session}; Amberline.Forms=old", HttpStatusCode.OK, "this line's name signs in; an old form cookie is ignored"),
+                     })
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, "/setup");
+                request.Headers.Add("Cookie", cookie);
+                using var answer = await stranger.SendAsync(request);
+                TestAssert.Equal(status, answer.StatusCode, what);
+            }
 
             home.Loop.Restart();
             await WaitForStartsAsync(home.Loop, 2, run);

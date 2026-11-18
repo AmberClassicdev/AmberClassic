@@ -20,7 +20,10 @@ public enum HostCode { Accepted, Missing, Expired, Foreign }
 /// </summary>
 public sealed class HostSessions
 {
-    public const string CookieName = "Amberline.Host";
+    /// <summary>Batch 879: each line's own (<see cref="PlatformLine.CookiePrefix"/>); both lines used Amberline.Host before.</summary>
+    public const string CookieName = PlatformLine.CookiePrefix + ".Host";
+    /// <summary>The forms' antiforgery cookie, setup mode's and the full Platform's (batch 879: each line's own; Amberline.Forms before).</summary>
+    public const string FormsCookie = PlatformLine.CookiePrefix + ".Forms";
     public static readonly TimeSpan CodeLifetime = TimeSpan.FromMinutes(2);
     private const int KeyBytes = 32;
     private const int MacBytes = 32;

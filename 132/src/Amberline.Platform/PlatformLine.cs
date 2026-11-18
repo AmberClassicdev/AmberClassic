@@ -27,6 +27,14 @@ public static class PlatformLine
     public const string ReleaseTagPrefix = "p132-v";
 
     /// <summary>
+    /// NOT RETAIL (batch 879): the start of the host page's cookie names (<see cref="HostSessions.CookieName"/>, <see cref="HostSessions.FormsCookie"/>).
+    /// Cookies ignore ports, so with one name on both lines a browser using both lines' pages on 127.0.0.1 kept one line's session and form
+    /// token only (batch 875). The 1.0.0.126 line has its own (Amberline126); the old shared Amberline.Host and Amberline.Forms are read by
+    /// neither and never deleted, so an older Amberline still running keeps its own.
+    /// </summary>
+    public const string CookiePrefix = "Amberline132";
+
+    /// <summary>
     /// NOT RETAIL (batch 830, owner 16 November 2026): the 1.0.0.126 line's home install, whose logins this line's setup and Users offer to copy
     /// (<see cref="HostLoginCopy"/>): its <c>FolderMove.HostName</c> and <c>InstallMarker</c> (<c>126/patch.json</c> "home"). The 1.0.0.126
     /// line has no such value; its Program.cs offers no copy. NOT RETAIL (batch 856): its friends' port, 8391 (<c>126/patch.json</c> "ports"

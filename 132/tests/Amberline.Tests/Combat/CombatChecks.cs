@@ -2084,12 +2084,14 @@ public static class CombatChecks
             new LifecycleStatsHooks(), new LifecycleStatsTransport());
         foreach (var team in new[] { Team.Order, Team.Chaos })
         foreach (var name in new[] { "Annie", "Orianna", "LeeSin", "Nidalee", "Nidalee_Cougar",
-                     "Yorick", "Shaco", "Ezreal", "Vayne", "Janna", "Blitzcrank" })
+                     "Yorick", "Shaco", "Ezreal", "Vayne", "Janna", "Blitzcrank", "Shyvana", "ShyvanaDragon" })
         {
             var expected = name switch {
                 "LeeSin" => new[] { 0, 1, 1, 1, 2, 3, 0 },
-                "Orianna" => new[] { 0, 1, 1, 1, 2, 2, 0 },
+                "Orianna" or "Shyvana" => new[] { 0, 1, 1, 1, 2, 2, 0 },
                 "Ezreal" => new[] { 0, 0, 0, 0, 1, 1, 0 },
+                // Batch 877: the model-only ShyvanaDragon layer rolls its own record's .6/.4 (CombatService.AttackOdds), never slot 0x42.
+                "ShyvanaDragon" => new[] { 0, 0, 0, 1, 1, 1, 0 },
                 _ => new[] { 0, 0, 1, 1, 1, 1, 0 },
             };
             var rolls = new[] { 0.1, 0.45, 0.5, 0.6, 0.8, 0.95, 1.0 };
@@ -2097,10 +2099,12 @@ public static class CombatChecks
             {
                 var world = new WorldState();
                 var hero = world.Register(new Entity(1, EntityKind.Hero, UnitType.Hero, team, new(7000, 7000))
-                    { ChampionName = name == "Nidalee_Cougar" ? "Nidalee" : name,
+                    { ChampionName = name switch { "Nidalee_Cougar" => "Nidalee", "ShyvanaDragon" => "Shyvana", _ => name },
                         AttackSpeedMod = 1, Health = 1000, MaxHealth = 1000, AttackDamage = 100, AttackRange = 550 });
                 if (name == "Nidalee_Cougar")
                     hero.ScriptCharacterData = new ScriptCharacterLayer(1, "Nidalee_Cougar", OverrideSpells: true);
+                if (name == "ShyvanaDragon")
+                    hero.ScriptCharacterData = new ScriptCharacterLayer(1, "ShyvanaDragon", OverrideSpells: false);
                 Amberline.Simulation.Stats.HeroAttackTimings.Apply(hero, data);
                 hero.AttackWindup = hero.MissileSpeed = 0;
                 var target = world.Register(new Entity(2, EntityKind.Minion, UnitType.Minion,

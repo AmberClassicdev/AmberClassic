@@ -169,7 +169,7 @@ public sealed class HostLoop(HostPaths paths, Action<string> openBrowser, TextWr
     /// <summary>A Restart started this process: the window already shows the banner and the browser the page.</summary>
     public bool Restarted { get; init; }
 
-    /// <summary>This process handed the window to <see cref="NextProcess"/>; its exit code is the window's.</summary>
+    /// <summary>This process handed the window to <see cref="NextProcess"/>, which asks for Enter itself (batch 879: and keeps the window once it answers).</summary>
     public bool HandedOver { get; internal set; }
 
     /// <summary>Where a restarting page sends the browser: <c>/open</c> with a fresh code, which the next process takes too.</summary>
@@ -447,20 +447,28 @@ public static class HostMode
     }
 
     /// <summary>
-    /// The next start in a new process in this window (<see cref="HostLoop.NextProcess"/>); this one waits and ends with its exit code.
-    /// Its ports, the account store's lease and its matches are closed by now, so the new process's single-instance check passes.
+    /// The next start in a new process in this window (<see cref="HostLoop.NextProcess"/>). Its ports, the account store's lease and its
+    /// matches are closed by now, so the new process's single-instance check passes. Batch 879: this one ends (0) once the new one answers
+    /// on the page's port, as the installer's start does (<c>HostInstall.StartInWindowAsync</c>), and the window goes on as the new one's;
+    /// it waited for the new one to end before, so each page-triggered restart left one more process of about 200 MB waiting (batch 875).
+    /// A new process that ends before it answers ends this one with its exit code.
     /// </summary>
     private static async Task<int> RunNextAsync(HostLoop loop, ProcessStartInfo start)
     {
         start.Environment[RestartedVariable] = "1";
-        // Ctrl+C reaches both processes: the new one stops by itself, and its exit code stays the window's.
+        // Ctrl+C while this one still waits reaches both processes: the new one stops by itself, and its exit code ends this one.
         ConsoleCancelEventHandler wait = (_, stop) => stop.Cancel = true;
         Console.CancelKeyPress += wait;
         try
         {
             using var process = Process.Start(start)!;
             loop.HandedOver = true;
-            await process.WaitForExitAsync();
+            var port = ReadPort(loop.Paths.Settings);
+            while (!process.HasExited)
+            {
+                if (await ProbeAsync(port) == true) return 0;
+                await Task.WhenAny(process.WaitForExitAsync(), Task.Delay(TimeSpan.FromMilliseconds(250)));
+            }
             return process.ExitCode;
         }
         catch (Win32Exception ex) { return Fail(loop, $"Amberline could not start again ({ex.Message}). Start it from its desktop icon."); }
@@ -507,7 +515,7 @@ public static class HostMode
             o.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(10);
             o.Listen(IPAddress.Loopback, port);
         });
-        builder.Services.AddAntiforgery(o => o.Cookie.Name = "Amberline.Forms");
+        builder.Services.AddAntiforgery(o => o.Cookie.Name = HostSessions.FormsCookie);
         builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(loop.Paths.Keys));
         await using var app = builder.Build();
         app.Use(async (context, next) =>

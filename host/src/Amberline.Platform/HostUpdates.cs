@@ -502,16 +502,24 @@ public static class HostUpdates
     /// tools/build-server.ps1: headings, bullet lists and paragraphs; bold, inline code and links in a line), where the page showed the raw text
     /// (batch 863). Each heading is an h3 under the release's h2. Every character of the notes is HTML-encoded, so no markup from them reaches the
     /// page; a link is one only to an https address (else its text), and a mark without its end, as the cut may leave, stays as written.
+    /// Batch 879: a line right after a bullet's (indented or not) goes on in that bullet, as GitHub shows it (CommonMark's continuation
+    /// lines); it was a paragraph of its own after the list (batch 875).
     /// </summary>
     internal static string Notes(string markdown)
     {
         var html = new StringBuilder();
+        // The open paragraph's lines, or the open bullet's while in a list.
         var paragraph = new List<string>();
         var list = false;
+        void Flush()
+        {
+            if (paragraph.Count > 0)
+                html.Append(list ? "<li>" : "<p>").Append(Inline(string.Join(" ", paragraph))).Append(list ? "</li>" : "</p>");
+            paragraph.Clear();
+        }
         void Close()
         {
-            if (paragraph.Count > 0) html.Append("<p>").Append(Inline(string.Join(" ", paragraph))).Append("</p>");
-            paragraph.Clear();
+            Flush();
             if (list) html.Append("</ul>");
             list = false;
         }
@@ -525,14 +533,11 @@ public static class HostUpdates
             else if (Bullet.Match(line) is { Success: true } item)
             {
                 if (!list) { Close(); html.Append("<ul>"); list = true; }
-                html.Append("<li>").Append(Inline(item.Groups[1].Value)).Append("</li>");
+                else Flush();
+                paragraph.Add(item.Groups[1].Value);
             }
             else if (line.Length == 0) Close();
-            else
-            {
-                if (list) Close();
-                paragraph.Add(line);
-            }
+            else paragraph.Add(line);
         }
         Close();
         return html.ToString();

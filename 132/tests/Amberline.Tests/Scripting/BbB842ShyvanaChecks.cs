@@ -25,6 +25,43 @@ public static class BbB842ShyvanaChecks
         TestAssert.Equal("", string.Join(" | ", match.Module.ScriptFailures.Select(failure => failure.Message)), "no script failure");
     }
 
+    /// <summary>
+    /// Batch 877 (batch 873's client log: "character shyvanadragon does not have animation 'Attack3' (spell 'ShyvanaBasicAttack3')" on dragon-form
+    /// attacks): the server's attack roll reads the odds of the record the unit shows. <c>ShyvanaTransform</c> pushes <c>ShyvanaDragon</c> without
+    /// its spells; the client's character-data setter keeps the basic attack names of the spells record and ends on the pushed record, which
+    /// holds the odds (<c>mAttackProbability</c>): ShyvanaDragon's .6/.4 over two attacks (its model has Attack1 and Attack2 only), not
+    /// Shyvana's .4/.3/.3 over three. The pop on the form's end restores her own odds.
+    /// </summary>
+    [Check("scripting.p132-shyvana-dragon-form-rolls-the-dragon-record-attack-odds")]
+    public static void DragonFormRollsTheDragonOdds()
+    {
+        using var match = new Match("Shyvana");
+        var hero = match.Hero;
+        match.Learn(1);
+        match.Refill();
+        static string Odds(Amberline.Core.Entity unit) => string.Join("/", Amberline.Simulation.Combat.CombatService.AttackOdds(unit, Amberline.Data.GameData.Default).Select(odd => odd.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)));
+        TestAssert.Equal("0.4/0.3/0.3", Odds(hero), "human form: Shyvana's three attacks");
+        ScriptBuff(match.Runtime, hero, "ShyvanaTransform", 1.0);
+        TestAssert.True(hero.ScriptCharacterData is { SkinName: "ShyvanaDragon", OverrideSpells: false }, "the form pushes ShyvanaDragon without its spells");
+        TestAssert.Equal("0.6/0.4", Odds(hero), "dragon form: the dragon record's two attacks (no slot 0x42, Attack3)");
+        match.Advance(1.5);
+        TestAssert.True(hero.ScriptCharacterData is null, "the form's end pops the dragon layer");
+        TestAssert.Equal("0.4/0.3/0.3", Odds(hero), "human form again: her own odds");
+
+        // Every record a shipped script pushes on a hero reads (no throw, no empty roll): the rule reaches them all.
+        var pushed = new[] { "ShyvanaDragon", "RammusDBC", "RammusPB", "SwainRaven", "SwainNoBird", "AniviaEgg", "UdyrTiger", "UdyrTurtle",
+            "UdyrPhoenix", "OriannaNoBall", "Cassiopeia_Death", "KogMawDead", "Nidalee_Cougar" };
+        var seen = string.Join(" ", pushed.Select(skin =>
+        {
+            hero.ScriptCharacterData = new Amberline.Core.ScriptCharacterLayer(99u, skin, OverrideSpells: false);
+            return $"{skin}={Odds(hero)}";
+        }));
+        hero.ScriptCharacterData = null;
+        TestAssert.Equal("ShyvanaDragon=0.6/0.4 RammusDBC=1 RammusPB=1 SwainRaven=1/0 SwainNoBird=0.75/0.25 AniviaEgg=1 UdyrTiger=1 UdyrTurtle=1 " +
+                         "UdyrPhoenix=1 OriannaNoBall=0.3/0.4/0.3 Cassiopeia_Death=0.6/0.4 KogMawDead=0.5/0.5 Nidalee_Cougar=0.5/0.5", seen,
+            "the pushed records' odds (shipped inibins)");
+    }
+
     // 128.04: Fury (the PAR_OTHER resource): a hit adds 2 (CharOnHitUnit) and UpdateSelfBuffActions adds 1 (its period is not pinned).
     [Check("scripting.p132-shyvana-fury-gains-two-per-hit-and-one-per-update")]
     public static void FuryGains()

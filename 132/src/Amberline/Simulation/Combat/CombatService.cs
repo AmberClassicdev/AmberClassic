@@ -352,9 +352,22 @@ public sealed partial class CombatService : IEndOfGameEngine
             RevealAttack(attacker, target);
     }
 
+    /// <summary>
+    /// The attack-animation odds a swing of <paramref name="attacker"/> rolls. A hero holding a pushed character layer rolls the odds of the
+    /// layer's record, also when the layer carries no spells (batch 877: Shyvana's <c>ShyvanaDragon</c>,.6/.4 over two attacks, where her own
+    /// record holds.4/.3/.3 and the dragon model has no Attack3). Reconstruction from the shared engine code in the 126 client (the hero roll is
+    /// server code): the client refills the basic attack names only from the spells record and ends with
+    /// <c>mCharacterData</c> = the pushed (top) record, which holds <c>mAttackProbability</c>; the client rolls
+    /// on the record it is given. Every other unit, and a layer whose record is not shipped, rolls its loaded odds.
+    /// </summary>
+    internal static IReadOnlyList<float> AttackOdds(Entity attacker, GameData data) =>
+        attacker.UnitType == UnitType.Hero && attacker.ScriptCharacterData is { } layer && data.OptionalChampion(layer.SkinName) is { } record
+            ? record.BasicAttackAnimationProbabilities
+            : attacker.BasicAttackAnimationProbabilities;
+
     private int SelectAttackAnimation(Entity attacker)
     {
-        var probabilities = attacker.BasicAttackAnimationProbabilities;
+        var probabilities = AttackOdds(attacker, _gameData);
         if (probabilities.Count <= 1) return 0;
         var roll = (float)_random.NextDouble();
         float cumulative = 0;

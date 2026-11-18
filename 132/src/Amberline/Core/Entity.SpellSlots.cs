@@ -134,10 +134,11 @@ public sealed partial class Entity
         ScriptCharacterData is { } top ? BuriedCharacterLayers.Append(top) : BuriedCharacterLayers;
 
     /// <summary>
-    /// The character whose record gives the unit its base stats, attack timing, animation odds and acquisition range: the pushed layer when it
+    /// The character whose record gives the unit its base stats, attack timing and acquisition range: the pushed layer when it
     /// carried its spells (<c>BBPushCharacterData</c> with <c>OverrideSpells</c>: Nidalee's <c>Nidalee_Cougar</c> form), else the champion itself.
     /// Reconstruction: the client re-reads the unit's character record on a push (the client's character-data setter); a layer that only
-    /// changes the model (Orianna's <c>OriannaNoBall</c>, <c>OverrideSpells</c> false) leaves the champion's own numbers.
+    /// changes the model (Orianna's <c>OriannaNoBall</c>, <c>OverrideSpells</c> false) leaves the champion's own numbers. The attack-animation
+    /// odds follow any pushed layer (batch 877, <c>CombatService.AttackOdds</c>).
     /// </summary>
     public string StatCharacterName => ScriptCharacterData is { OverrideSpells: true } layer ? layer.SkinName : ChampionName;
 

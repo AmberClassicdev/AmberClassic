@@ -159,7 +159,10 @@ public static class Program
         await using var manager = new GameManager(hostSettings, Path.Combine(home, "games"));
         // Batch 846: the spectator grid (127.0.0.1:8088, bound when the first spectated game registers); streams an earlier run left go now.
         SpectatorGrid.DeleteLeftovers(Path.Combine(home, "games"));
-        await using var spectators = new SpectatorGrid();
+        // DIAGNOSTICS (batch 878): a throwaway Platform (host/tools/air-page-shots.ps1) keeps its grid off the client's 8088, which is the
+        // install's; such a grid serves no game client (the client always asks 8088), only the lobby's spectator seats.
+        await using var spectators = new SpectatorGrid(Environment.GetEnvironmentVariable("AMBERLINE_SPECTATOR_GRID_PORT") is { Length: > 0 } gridPort
+            ? new IPEndPoint(IPAddress.Loopback, int.Parse(gridPort, System.Globalization.CultureInfo.InvariantCulture)) : null);
         accounts.RecoverResults(manager, Console.Out);
         var sessions = new PlatformSessions(accounts, activity: host?.Activity);
         // NOT RETAIL: a friend's game start names the game address their player tool reported through the tunnel (spec §7).
@@ -220,7 +223,7 @@ public static class Program
         });
         builder.Services.AddAntiforgery(o =>
         {
-            o.Cookie.Name = "Amberline.Forms";
+            o.Cookie.Name = HostSessions.FormsCookie;
             o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
         });
         if (host is not null) builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(host.Paths.Keys));
