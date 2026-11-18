@@ -2201,8 +2201,25 @@ internal sealed class BbBuffRuntime
         }
     }
 
-    private static bool RestoresOnDeactivate(BbScript script, BbSetStatus status, bool rest) =>
-        script.Walk().Any(step => step.Hook == "OnBuffDeactivate" && step.Block.Function == "BBSetStatus" &&
+    /// <summary>
+    /// Whether the relay's end gives the status back: its own <c>OnBuffDeactivate</c> writes the rest value, or adds to its holder a buff whose
+    /// activation or deactivation does. FizzJumpDelay does not restore CanMove itself; the FizzTrickSlam it adds at its end does, in its
+    /// OnBuffActivate, so Fizz cannot walk off his trident before the slam.
+    /// </summary>
+    private bool RestoresOnDeactivate(BbScript script, BbSetStatus status, bool rest)
+    {
+        if (WritesRest(script, "OnBuffDeactivate", status, rest)) return true;
+        foreach (var step in script.Walk())
+        {
+            if (step.Hook != "OnBuffDeactivate" || step.Block.Function != "BBSpellBuffAdd" || step.Block.Text("TargetVar") != "Owner" ||
+                step.Block.Text("BuffName") is not { } next || _scripts.FindOrShipped(next) is not { } added || ReferenceEquals(added, script)) continue;
+            if (WritesRest(added, "OnBuffActivate", status, rest) || WritesRest(added, "OnBuffDeactivate", status, rest)) return true;
+        }
+        return false;
+    }
+
+    private static bool WritesRest(BbScript script, string hook, BbSetStatus status, bool rest) =>
+        script.Walk().Any(step => step.Hook == hook && step.Block.Function == "BBSetStatus" &&
                                   step.Block.Param("Status") is BbValue.Reference { Name: var name } && name == status.ToString() &&
                                   step.Block.Param("SrcValue") is BbValue.Bool { Value: var written } && written == rest);
 
