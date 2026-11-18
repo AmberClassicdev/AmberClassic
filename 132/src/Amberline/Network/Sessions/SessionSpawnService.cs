@@ -232,7 +232,17 @@ public sealed class SessionSpawnService
             // for the batch-10 loading-card workaround, so they must not be counted twice.
             packets.Add(SpawnPackets.StartSpawn());
         }
-        foreach (var member in participants)
+        // Amber Classic fix: the recipient's own hero goes first. The 1.0.0.132 client crashed (null read in
+        // msvcr80, from a std::string built on a NULL name) right after StartSpawn whenever it was not the
+        // roster's first seat (netUID 1+): it got another seat's revealed hero burst (visibility, stats, 0xF4,
+        // spells) before its own hero existed. The first seat, which already got its own hero first, never
+        // crashed, and a reconnect (no reveal of the other seats) did not either. Stable order otherwise; the
+        // spectator stream (recipient null) keeps the roster order.
+        var ordered = recipient is null
+            ? participants
+            : participants.Where(member => member == recipient)
+                .Concat(participants.Where(member => member != recipient)).ToList();
+        foreach (var member in ordered)
         {
             var hero = member.Hero ?? throw new InvalidOperationException("Participant hero is not created.");
             // NOT RETAIL: retail flags every bot hero (byte 16) and the client names it from
