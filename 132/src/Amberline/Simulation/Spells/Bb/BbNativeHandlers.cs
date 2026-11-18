@@ -1597,7 +1597,6 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         var loop = Flag(call, "Loop", false);
         Spells.Effects.PlayAnimation(unit, name, loop: loop, lockAnimation: Flag(call, "Lock", true),
             blend: Flag(call, "Blend", true), duration: (float)Sum(call, "ScaleTime"));
-        if (!Flag(call, "Lock", true)) NoteUnlockedPlay(unit, name, loop, Flag(call, "Blend", true), (float)Sum(call, "ScaleTime"));
         // Reconstruction (batch 476): a looped play by a channel's hook is that channel's loop (BbScriptChannels.NoteLoop).
         if (loop) _host.Channels.NoteLoop(unit);
     }
