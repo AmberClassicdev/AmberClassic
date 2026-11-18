@@ -211,6 +211,10 @@ internal sealed partial class BbNativeHandlers
         // GetStealthed, the sight rule, true sight and the missile and targeting gates all read it. Caitlyn's CaitlynYordleTrap passes the same Name and
         // is not stealthed: her shipped script shows the trap to the enemy team (owner decision, 28 October 2026).
         if (skin == "Nidalee_Spear" && name == TrapUnitName && !flags.IsWard && !flags.Placemarker) flags = flags with { Stealthed = true };
+        // Amber Classic probes for the shark of Fizz's R: "shark-skin=JarvanIVStandard" spawns that character in its place (does a unit spawned
+        // here show at all?), "shark-plain=1" spawns it without the call's flags (rooted, invulnerable, ghosted...).
+        if (skin == "FizzShark" && AmberDebug.Text("shark-skin") is { } sharkSkin) (skin, name) = (sharkSkin, sharkSkin);
+        if (call.Value("Skin") as string == "FizzShark" && AmberDebug.On("shark-plain")) flags = default;
         var visibility = Sum(call, "VisibilitySize");
         if (!(visibility >= 0.0) || !double.IsFinite(visibility))
             throw new BbRuntimeException($"BBSpawnMinion VisibilitySize {visibility} (Skin={skin}) is not a radius");

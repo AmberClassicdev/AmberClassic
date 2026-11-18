@@ -1600,9 +1600,19 @@ internal sealed partial class BbNativeHandlers : IBbNativeHandler
         var loop = Flag(call, "Loop", false);
         // Amber Classic debug switch (AmberDebug, "fizz-e-lock=1"): Fizz's jump clip (Spell3a, unlocked in FizzJump) is sent locked, to see
         // whether a lock keeps it on screen when E is cast while he walks.
-        var forceLock = name == "Spell3a" && unit.UnitType == UnitType.Hero && unit.ChampionName == "Fizz" && AmberDebug.On("fizz-e-lock");
+        var fizzJump = name == "Spell3a" && unit.UnitType == UnitType.Hero && unit.ChampionName == "Fizz";
+        var shark = unit.Name == "FizzShark" || unit.ChampionName == "FizzShark" || (_host.HasFrame && _host.Frame.ScriptName == "FizzShark");
+        var forceLock = fizzJump && AmberDebug.On("fizz-e-lock");
+        // Amber Classic probes: "fizz-e-anim-name=X" / "shark-anim-name=X" send clip X instead. A name the character lacks makes the client
+        // log "Playing Animation Error, Cant Find Animation: X" in its r3dlog, which proves it read the packet for that unit.
+        if (fizzJump && AmberDebug.Text("fizz-e-anim-name") is { } fizzProbe) name = fizzProbe;
+        if (shark && AmberDebug.Text("shark-anim-name") is { } sharkProbe) name = sharkProbe;
         Spells.Effects.PlayAnimation(unit, name, loop: loop, lockAnimation: forceLock || Flag(call, "Lock", true),
             blend: Flag(call, "Blend", true), duration: (float)Sum(call, "ScaleTime"));
+        // "shark-anim-delay=0.3": the shark's clip is sent again that many seconds later (BbScriptMoves.Tick sends it).
+        if (shark && AmberDebug.Number("shark-anim-delay") is double delay and > 0.0 and < 10.0)
+            AmberDebug.Replays.Add((unit, name, forceLock || Flag(call, "Lock", true), Flag(call, "Blend", true), (float)Sum(call, "ScaleTime"),
+                Spells.CurrentTime + delay));
         // Reconstruction (batch 476): a looped play by a channel's hook is that channel's loop (BbScriptChannels.NoteLoop).
         if (loop) _host.Channels.NoteLoop(unit);
     }

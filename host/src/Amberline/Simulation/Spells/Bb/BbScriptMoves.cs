@@ -313,6 +313,17 @@ internal sealed class BbScriptMoves
             }
         }
         if (_resumes.Count > 0) ResumeOrders();
+        // Amber Classic probe "shark-anim-delay" (BbNativeHandlers.PlayAnimation): the clips due now are sent again.
+        if (AmberDebug.Replays.Count > 0)
+        {
+            var now = _host.Spells.CurrentTime;
+            foreach (var replay in AmberDebug.Replays.Where(item => item.Due <= now).ToArray())
+            {
+                AmberDebug.Replays.Remove(replay);
+                if (replay.Unit.Alive && _host.Spells.Effects.IsReferenceReady(replay.Unit))
+                    _host.Spells.Effects.PlayAnimation(replay.Unit, replay.Name, lockAnimation: replay.Lock, blend: replay.Blend, duration: replay.Scale);
+            }
+        }
     }
 
     /// <summary>
@@ -358,6 +369,9 @@ internal sealed class BbScriptMoves
             if (unit.Alive && spells.Effects.IsReferenceReady(unit))
                 spells.Effects.SendWaypoints(unit, spells.Movement.InstallStop(unit), spells.World.Clock.SyncId());
         }
+        // Amber Classic probe "fizz-e-run" (BbNativeHandlers.Move): the dash is over, the script's own overrides go back.
+        if (AmberDebug.RunOverridden.Remove(unit.NetId) && spells.Effects.IsReferenceReady(unit))
+            spells.Effects.SetAnimationStates(unit, unit.ScriptAnimationOverrides.Select(pair => (pair.Key, pair.Value)).ToArray());
         if (entry.Buff is { } buff) _host.Router.RunMoveHooks(buff, success, terrain);
         else if (entry.HeldBefore is { } held)
         {
