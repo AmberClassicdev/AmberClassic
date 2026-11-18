@@ -404,6 +404,16 @@ public sealed class BbChampionModule : IChampionSpellModule
 
     private static SpellValidation Failure(string reason, SpellCastFailure failure) => new(false, reason, failure);
 
+    /// <summary>Amber Classic: whether the spell's SelfExecute moves its caster with the order cancelled and plays an unlocked clip on it.</summary>
+    private static bool DashesWithUnlockedClip(BbScript script)
+    {
+        var steps = script.Walk().Where(step => step.Hook == "SelfExecute").ToList();
+        return steps.Any(step => step.Block.Function == "BBMove" && step.Block.Text("UnitVar") == "Owner" &&
+                                 step.Block.Param("MovementOrdersType") is not BbValue.Reference { Name: "POSTPONE_CURRENT_ORDER" }) &&
+               steps.Any(step => step.Block.Function == "BBPlayAnimation" && step.Block.Text("TargetVar") == "Owner" &&
+                                 step.Block.Param("Lock") is BbValue.Bool { Value: false });
+    }
+
     /// <summary>
     /// The reach the slot's spell script asks for this cast (<c>AdjustCastInfo</c>: Buster Shot's 600 plus 90 per level while Draw a Bead
     /// stands), or null for the spell's own. The cast gate and the walk into range both read it.
@@ -534,6 +544,12 @@ public sealed class BbChampionModule : IChampionSpellModule
         if (takesOrder && attacking && system.Effects.IsReferenceReady(hero)) system.Effects.SendStopAttack(hero);
         // The cast's stop is a one-point path, installed on receipt (the client's follow-path routine): seated on its anchor at once.
         if (takesOrder && system.Effects.IsReferenceReady(hero))
+            system.Effects.SendWaypoints(hero, system.Movement.InstallStop(hero), system.World.Clock.SyncId());
+        // Amber Classic fix: an instacast whose SelfExecute dashes its caster with the order cancelled and plays an unlocked clip (FizzJump's
+        // Spell3a, RivenFeint's Spell3) stops the hero's walk first. Cast while running, the client kept its run loop over the unlocked clip:
+        // Fizz slid along the ground instead of vaulting onto his trident; cast standing still, the clip played. The stop is the one-point
+        // path every cast that takes the order already sends, and the script cancels the order anyway (MovementOrdersType CANCEL_ORDER).
+        else if (!takesOrder && DashesWithUnlockedClip(script) && system.Effects.IsReferenceReady(hero))
             system.Effects.SendWaypoints(hero, system.Movement.InstallStop(hero), system.World.Clock.SyncId());
         // No 0x8A here (batch 168): the cast's own cooldown travels in the cast answer below and the client starts it
         // itself, at the cast frame for a windup spell (the client's cast-frame routine ->
